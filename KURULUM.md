@@ -64,7 +64,21 @@ python setup.py
 
 `setup.py` mevcut sanal ortamı oluşturmaz; bu nedenle önce `.venv` oluşturulmalıdır.
 
-## 3. Gemini API anahtarını ekleme
+## 3. API kodlarının bulunduğu dosya ve Gemini kurulumu
+
+JARVIS'in API kodları şu dosyada tutulur:
+
+**`config/api_keys.json`**
+
+Bu dosyada kullanılabilecek anahtar alanları:
+
+- `gemini_api_key`: Canlı sesli görüşme ve Gemini işlemleri için zorunlu
+- `openrouter_api_key`: Metin işlemleri için isteğe bağlı yedek sağlayıcı
+- `groq_api_key`: Metin işlemleri için isteğe bağlı yedek sağlayıcı
+- `cerebras_api_key`: Metin işlemleri için isteğe bağlı yedek sağlayıcı
+- `elevenlabs_api_key`: ElevenLabs TTS seçilirse gerekli
+
+Dosya yoksa `config` klasörünün içinde `api_keys.json` adıyla oluşturulmalıdır. En güvenli yöntem anahtarı yardımcı komutla eklemektir.
 
 1. Google AI Studio'dan bir anahtar oluşturun: <https://aistudio.google.com/apikey>
 2. Anahtarı güvenli şekilde yapılandırmaya ekleyin:

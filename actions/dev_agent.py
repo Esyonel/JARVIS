@@ -25,12 +25,20 @@ def _get_api_key() -> str:
 
 
 def _get_model(model_name: str):
-    from google import genai
-    _c = genai.Client(api_key=_get_api_key())
+    """Routes through core.ai_text so a Gemini outage or exhausted daily quota
+    falls over to the configured backup providers. Calling Gemini directly
+    meant one 503 aborted the whole build with 'bu işlemi gerçekleştiremiyorum',
+    even with working keys for other providers sitting in the config."""
+
+    class _Response:
+        def __init__(self, text: str):
+            self.text = text
 
     class _W:
         def generate_content(self, contents):
-            return _c.models.generate_content(model=model_name, contents=contents)
+            from core.ai_text import generate
+            prompt = contents if isinstance(contents, str) else str(contents)
+            return _Response(generate(prompt, model=model_name))
 
     return _W()
 

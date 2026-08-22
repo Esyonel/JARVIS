@@ -989,7 +989,10 @@ class JarvisLive:
         loop = asyncio.get_event_loop()
 
         import numpy as np
+
+        from core.voice_tension import TensionMeter
         _last_level_emit = [0.0]
+        _tension = TensionMeter()
 
         def callback(indata, frames, time_info, status):
             with self._speaking_lock:
@@ -1010,6 +1013,14 @@ class JarvisLive:
                     level_pct = min(100.0, (rms / 3000.0) * 100.0)
                     try:
                         self.ui.update_mic_level(level_pct)
+                    except Exception:
+                        pass
+
+                    # Acoustic arousal from the same block — measured, not guessed.
+                    try:
+                        tension = _tension.update(indata)
+                        if tension is not None:
+                            self.ui.update_voice_tension(tension, _tension.label())
                     except Exception:
                         pass
 

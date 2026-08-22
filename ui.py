@@ -1905,6 +1905,7 @@ class MainWindow(QMainWindow):
     _ticker_world_sig = pyqtSignal(list)     # world markets ticker items (thread-safe)
     _ticker_news_sig  = pyqtSignal(list)     # news ticker items (thread-safe)
     _mic_level_sig    = pyqtSignal(float)    # live mic input level 0-100 (thread-safe)
+    _tension_sig      = pyqtSignal(float, str)  # acoustic arousal 0-100 + label
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -2060,6 +2061,9 @@ class MainWindow(QMainWindow):
         # independent of whether JARVIS ends up responding.
         self._mic_level_sig.connect(
             lambda pct: self._bar_mic.set_value(pct, f"{pct:.0f}%")
+        )
+        self._tension_sig.connect(
+            lambda pct, label: self._bar_tension.set_value(pct, f"{pct:.0f}% {label}")
         )
 
         self._log_sig.connect(self._log.append_log)
@@ -2693,14 +2697,15 @@ class MainWindow(QMainWindow):
         lay.addSpacing(2)
 
         self._bar_mic = MetricBar("MIC", C.GREEN)
+        self._bar_tension = MetricBar("SES", C.ACC)
         self._bar_cpu = MetricBar("CPU", C.PRI)
         self._bar_mem = MetricBar("MEM", C.ACC2)
         self._bar_net = MetricBar("NET", C.GREEN)
         self._bar_gpu = MetricBar("GPU", C.ACC)
         self._bar_tmp = MetricBar("TMP", "#ff6688")
 
-        for bar in [self._bar_mic, self._bar_cpu, self._bar_mem, self._bar_net,
-                    self._bar_gpu, self._bar_tmp]:
+        for bar in [self._bar_mic, self._bar_tension, self._bar_cpu, self._bar_mem,
+                    self._bar_net, self._bar_gpu, self._bar_tmp]:
             lay.addWidget(bar)
 
         lay.addSpacing(6)
@@ -3557,6 +3562,36 @@ class MainWindow(QMainWindow):
         self._assistant_name = _read_full_config().get("assistant_name", "JARVIS") or "JARVIS"
         self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. {self._assistant_name} online.")
 
+def _apply_app_icon(app: QApplication) -> None:
+    """Give the window and taskbar the JARVIS arc-reactor icon.
+
+    Without this the taskbar shows the generic Python icon, because Windows
+    groups a windowed app under its HOST EXECUTABLE unless the process
+    declares its own AppUserModelID — setting the Qt icon alone is not enough,
+    the ID has to be set before the first window appears.
+    """
+    ico = CONFIG_DIR / "jarvis.ico"
+    if not ico.exists():
+        try:
+            MainWindow._build_jarvis_icon(ico)
+        except Exception as e:
+            print(f"[UI] Icon could not be generated: {e}")
+            return
+
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Esyonel.JARVIS.Assistant")
+        except Exception as e:
+            print(f"[UI] AppUserModelID could not be set: {e}")
+
+    try:
+        from PyQt6.QtGui import QIcon
+        app.setWindowIcon(QIcon(str(ico)))
+    except Exception as e:
+        print(f"[UI] Window icon could not be applied: {e}")
+
+
 class _RootShim:
     def __init__(self, app: QApplication):
         self._app = app
@@ -3570,7 +3605,9 @@ class JarvisUI:
     def __init__(self, face_path: str, size=None):
         self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
+        _apply_app_icon(self._app)
         self._win = MainWindow(face_path)
+        self._win.setWindowIcon(self._app.windowIcon())
         self._win.show()
         self.root = _RootShim(self._app)
 
@@ -3631,6 +3668,13 @@ class JarvisUI:
     def update_mic_level(self, level_pct: float):
         """Thread-safe: update the live mic-input-level meter (MIC bar)."""
         self._win._mic_level_sig.emit(level_pct)
+
+    def update_voice_tension(self, pct: float, label: str):
+        """Thread-safe: update the acoustic-arousal meter (SES bar).
+
+        Measures loudness/pitch/pitch-variability, NOT emotional state — see
+        core/voice_tension.py for why that distinction is kept explicit."""
+        self._win._tension_sig.emit(pct, label)
 
     def wait_for_api_key(self):
         while not self._win._ready:
