@@ -18,6 +18,7 @@ PROVIDERS = {
     "1": ("openrouter_api_key", "OpenRouter  (https://openrouter.ai/keys)"),
     "2": ("groq_api_key",       "Groq        (https://console.groq.com/keys)"),
     "3": ("cerebras_api_key",   "Cerebras    (https://cloud.cerebras.ai)"),
+    "4": ("gemini_api_key",     "Gemini — SES icin gerekli  (https://aistudio.google.com/apikey)"),
 }
 
 
@@ -26,7 +27,7 @@ def main() -> None:
     for num, (_key, label) in PROVIDERS.items():
         print(f"  {num}) {label}")
 
-    choice = input("\nSecim (1-3): ").strip()
+    choice = input("\nSecim (1-4): ").strip()
     if choice not in PROVIDERS:
         print("Gecersiz secim, iptal edildi.")
         return

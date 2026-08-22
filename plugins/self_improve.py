@@ -114,6 +114,15 @@ def run(parameters: dict, player=None, session_memory=None, autonomous: bool = F
         _log(msg, player)
         return msg
 
+    import_error = _check_imports_available(target)
+    if import_error:
+        _git_revert(checkpoint)
+        msg = (f"Sir, the new code needs a package that isn't installed ({import_error}) — "
+               "reverted automatically rather than leaving a plugin that only reports "
+               "'library not found'.")
+        _log(msg, player)
+        return msg
+
     plugin_error = _check_plugin_validity(target)
     if plugin_error:
         _git_revert(checkpoint)
@@ -283,6 +292,41 @@ def _check_syntax(file_rel: str) -> str | None:
     )
     if result.returncode != 0:
         return (result.stderr or result.stdout).strip()[:500]
+    return None
+
+
+def _check_imports_available(file_rel: str) -> str | None:
+    """Rejects generated code that imports a package which isn't installed.
+
+    py_compile and the plugin loader both PASS such a file when the import sits
+    inside a try/except in run() — the plugin then loads fine and simply answers
+    "library not found" forever. Checking the imports statically catches that
+    before it ships. Returns the offending module name, or None if all resolve.
+    """
+    import ast
+    import importlib.util
+
+    try:
+        tree = ast.parse((BASE_DIR / file_rel).read_text(encoding="utf-8"))
+    except Exception as e:
+        return f"parse failed: {e}"
+
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            modules.add(node.module.split(".")[0])
+
+    for name in sorted(modules):
+        # Local packages resolve by path, not by installation.
+        if (BASE_DIR / name).is_dir() or (BASE_DIR / f"{name}.py").exists():
+            continue
+        try:
+            if importlib.util.find_spec(name) is None:
+                return name
+        except Exception:
+            return name
     return None
 
 

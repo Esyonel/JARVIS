@@ -69,13 +69,11 @@ def generate(prompt: str, model: str | None = None) -> str:
     cfg = _config()
     failures: list[str] = []
 
-    gemini_key = cfg.get("gemini_api_key")
-    if gemini_key:
-        try:
-            return _gemini(gemini_key, prompt, model or "gemini-flash-latest")
-        except Exception as e:
-            failures.append(f"gemini: {str(e)[:120]}")
-
+    # Gemini is tried LAST on purpose. Its free tier is only ~20 calls/day and
+    # the live voice session can ONLY run on Gemini — no other provider offers
+    # that realtime audio API. Spending that quota on text work would silently
+    # cost the voice assistant its voice, so text falls to the other providers
+    # first and only reaches Gemini if every one of them is unavailable.
     for key_name, base_url, default_model in _OPENAI_COMPATIBLE:
         key = cfg.get(key_name)
         if not key:
@@ -84,6 +82,13 @@ def generate(prompt: str, model: str | None = None) -> str:
             return _openai_compatible(key, base_url, default_model, prompt)
         except Exception as e:
             failures.append(f"{key_name.replace('_api_key', '')}: {str(e)[:120]}")
+
+    gemini_key = cfg.get("gemini_api_key")
+    if gemini_key:
+        try:
+            return _gemini(gemini_key, prompt, model or "gemini-flash-latest")
+        except Exception as e:
+            failures.append(f"gemini: {str(e)[:120]}")
 
     if not failures:
         raise RuntimeError("No AI provider is configured — add gemini_api_key or groq_api_key.")
