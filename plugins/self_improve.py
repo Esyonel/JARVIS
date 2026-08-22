@@ -103,6 +103,13 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         _log(msg, player)
         return msg
 
+    plugin_error = _check_plugin_validity(target)
+    if plugin_error:
+        _git_revert(checkpoint)
+        msg = f"Sir, the new plugin didn't pass validation ({plugin_error}) — reverted automatically, JARVIS is untouched."
+        _log(msg, player)
+        return msg
+
     try:
         _git_finalize(feature)
     except Exception as e:
@@ -179,10 +186,19 @@ Feature to add: {feature}
 Reply with ONLY a JSON object (no markdown fences), one of two shapes:
 
 For a brand new file (prefer this for a genuinely new capability — put it in
-plugins/<snake_case_name>.py following the existing plugin pattern: a PLUGIN
-dict with name/description/parameters, and a run(parameters, player=None,
-session_memory=None) function that never raises):
+plugins/<snake_case_name>.py following the existing plugin pattern EXACTLY):
 {{"mode": "new_file", "file": "plugins/example_name.py", "content": "<full file content>"}}
+
+The file content for a new plugin MUST follow this exact contract (copy the
+shape precisely, these are the most common mistakes to avoid):
+  - A module-level dict literally named PLUGIN with keys "name" (snake_case
+    str), "description" (str), "parameters" (a dict — "type" MUST be the
+    UPPERCASE STRING "OBJECT", not "object"; "properties" a dict, "required"
+    a list, both may be empty).
+  - A top-level function `def run(parameters: dict, player=None,
+    session_memory=None) -> str:` that returns a SHORT PLAIN STRING (never a
+    dict/JSON) — this string is spoken aloud to the user. Never let it raise;
+    catch errors internally and return an error string instead.
 
 For editing an existing file (prefer this when changing existing behavior):
 {{"mode": "edit", "file": "path/relative/to/repo/root.py",
@@ -255,6 +271,27 @@ def _check_syntax(file_rel: str) -> str | None:
     if result.returncode != 0:
         return (result.stderr or result.stdout).strip()[:500]
     return None
+
+
+def _check_plugin_validity(file_rel: str) -> str | None:
+    """For new/edited files under plugins/, run the real plugin loader's
+    schema validation — catches a file that compiles fine but doesn't match
+    the expected PLUGIN dict / run() contract (wrong types, missing fields),
+    which py_compile alone would never notice."""
+    if not file_rel.startswith("plugins/") or Path(file_rel).name.startswith("_"):
+        return None
+    try:
+        import importlib.util
+        from core.plugin_loader import _validate as _plugin_validate
+
+        target = BASE_DIR / file_rel
+        spec = importlib.util.spec_from_file_location(f"_self_improve_check_{target.stem}", target)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        rec = _plugin_validate(module, target.name)
+        return None if rec.valid else rec.error
+    except Exception as e:
+        return str(e)
 
 
 def _log(message: str, player=None) -> None:
