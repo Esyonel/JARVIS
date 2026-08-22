@@ -33,9 +33,12 @@ CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 _TIMEOUT = 60
 
 # Tried in order. Each entry: (config key, base url, default model).
+# Model ids verified against each provider's live /models endpoint — these
+# providers retire model names regularly, so a 404 here means the id was
+# dropped upstream; re-check /models rather than assuming the key is bad.
 _OPENAI_COMPATIBLE = [
-    ("groq_api_key",       "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile"),
-    ("cerebras_api_key",   "https://api.cerebras.ai/v1",     "llama-3.3-70b"),
+    ("groq_api_key",       "https://api.groq.com/openai/v1", "openai/gpt-oss-120b"),
+    ("cerebras_api_key",   "https://api.cerebras.ai/v1",     "gpt-oss-120b"),
     ("openrouter_api_key", "https://openrouter.ai/api/v1",   "meta-llama/llama-3.3-70b-instruct:free"),
 ]
 
