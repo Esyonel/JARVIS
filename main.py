@@ -969,53 +969,30 @@ class JarvisLive:
         print("[JARVIS] 🎤 Mic started")
         loop = asyncio.get_event_loop()
 
-        from core import voice_id
-        voice_gate_enabled = voice_id.is_enrolled()
-        if voice_gate_enabled:
-            print("[JARVIS] 🔒 Voice lock active — only the enrolled voice will be forwarded.")
-
-        raw_queue: asyncio.Queue = asyncio.Queue()
-        _WINDOW_BYTES = int(SEND_SAMPLE_RATE * 1.6) * 2  # ~1.6 s of 16-bit mono PCM per voice check
-        _BLOCK_SECONDS = 3.0  # how long to mute after a non-owner voice is detected
+        import numpy as np
+        _last_level_emit = [0.0]
 
         def callback(indata, frames, time_info, status):
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
             if not jarvis_speaking and not self.ui.muted and not self._phone_active:
                 data = indata.tobytes()
-                loop.call_soon_threadsafe(raw_queue.put_nowait, data)
+                loop.call_soon_threadsafe(
+                    self.out_queue.put_nowait,
+                    {"data": data, "mime_type": "audio/pcm"}
+                )
 
-        async def gate_and_forward():
-            # Forward-first, verify-after: audio is streamed to Gemini immediately
-            # (zero added latency for the normal case) while a rolling ~1.6s window
-            # is checked in the background. Only on a MISMATCH do we start muting —
-            # this trades a brief (~1.6s) leak of a stranger's voice for keeping the
-            # owner's own latency exactly what it was before voice-lock existed.
-            pending = bytearray()
-            blocked_until = 0.0
-            while True:
-                chunk = await raw_queue.get()
+                # Visual mic-activity meter (independent of any AI response) —
+                # throttled to ~8 updates/sec so it doesn't flood the UI thread.
                 now = time.monotonic()
-
-                if not voice_gate_enabled or voice_id.is_gate_disabled():
-                    self.out_queue.put_nowait({"data": chunk, "mime_type": "audio/pcm"})
-                    continue
-
-                if now >= blocked_until:
-                    self.out_queue.put_nowait({"data": chunk, "mime_type": "audio/pcm"})
-
-                pending += chunk
-                if len(pending) >= _WINDOW_BYTES:
-                    window = bytes(pending)
-                    pending.clear()
+                if now - _last_level_emit[0] > 0.12:
+                    _last_level_emit[0] = now
+                    rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2)))
+                    level_pct = min(100.0, (rms / 3000.0) * 100.0)
                     try:
-                        matched = await loop.run_in_executor(
-                            None, voice_id.matches_owner, window
-                        )
-                    except Exception as e:
-                        print(f"[JARVIS] Voice check error, letting audio through: {e}")
-                        matched = True
-                    blocked_until = 0.0 if matched else (time.monotonic() + _BLOCK_SECONDS)
+                        self.ui.update_mic_level(level_pct)
+                    except Exception:
+                        pass
 
         try:
             with sd.InputStream(
@@ -1026,7 +1003,8 @@ class JarvisLive:
                 callback=callback,
             ):
                 print("[JARVIS] 🎤 Mic stream open")
-                await gate_and_forward()
+                while True:
+                    await asyncio.sleep(0.1)
         except Exception as e:
             print(f"[JARVIS] ❌ Mic: {e}")
             raise
@@ -1529,7 +1507,7 @@ class JarvisLive:
                 try:
                     await self._dashboard.serve()
                 except (SystemExit, Exception) as e:
-                    print(f"[Dashboard] Failed to start (port 8000 busy?): {e}")
+                    print(f"[Dashboard] Failed to start: {e}")
 
             asyncio.create_task(_run_dashboard_safely())
             # Runs for the whole lifetime, not just inside an active session
@@ -1552,45 +1530,58 @@ class JarvisLive:
                     http_options={"api_version": "v1alpha" if self._enhanced_live else "v1beta"}
                 )
 
-                async with (
-                    client.aio.live.connect(model=LIVE_MODEL, config=config) as session,
-                    asyncio.TaskGroup() as tg,
-                ):
-                    self.session          = session
-                    self.audio_in_queue   = asyncio.Queue()
-                    self.out_queue        = asyncio.Queue(maxsize=200)
-                    self._turn_done_event = asyncio.Event()
+                # The connect step itself is wrapped in its own timeout — a hung
+                # handshake (seen once with no clear cause) must never leave JARVIS
+                # silently stuck forever; it should fail fast and retry instead.
+                connect_cm = client.aio.live.connect(model=LIVE_MODEL, config=config)
+                async with asyncio.timeout(20):
+                    session = await connect_cm.__aenter__()
 
-                    # Reset transient state that must not carry over from a previous session
-                    self._pending_vision       = None
-                    self._vision_cam_active    = False
-                    self._vision_close_pending = False
-                    self._vision_busy          = False
-                    self._vision_last_time     = 0.0
-                    self._interrupted          = False
+                try:
+                    async with asyncio.TaskGroup() as tg:
+                        self.session          = session
+                        self.audio_in_queue   = asyncio.Queue()
+                        self.out_queue        = asyncio.Queue(maxsize=200)
+                        self._turn_done_event = asyncio.Event()
 
-                    print("[JARVIS] Connected.")
-                    self.ui.set_state("LISTENING")
-                    self.ui.write_log("SYS: JARVIS online.")
+                        # Reset transient state that must not carry over from a previous session
+                        self._pending_vision       = None
+                        self._vision_cam_active    = False
+                        self._vision_close_pending = False
+                        self._vision_busy          = False
+                        self._vision_last_time     = 0.0
+                        self._interrupted          = False
 
-                    if self._dashboard:
-                        await self._dashboard.broadcast({"type": "status", "state": "active"})
+                        print("[JARVIS] Connected.")
+                        self.ui.set_state("LISTENING")
+                        self.ui.write_log("SYS: JARVIS online.")
 
-                    tg.create_task(self._send_realtime())
-                    tg.create_task(self._listen_audio())
-                    tg.create_task(self._receive_audio())
-                    tg.create_task(self._play_audio())
-                    tg.create_task(self._run_system_monitor())
-                    tg.create_task(self._run_background_monitor())
-                    tg.create_task(self._run_proactive_mode())
-                    if self._dashboard:
-                        tg.create_task(self._relay_phone_audio())
+                        if self._dashboard:
+                            await self._dashboard.broadcast({"type": "status", "state": "active"})
 
-                    # Morning briefing — fires once per process launch (if enabled)
-                    if not self._briefing_sent and get_brief_enabled():
-                        self._briefing_sent = True
-                        tg.create_task(self._send_startup_briefing())
+                        tg.create_task(self._send_realtime())
+                        tg.create_task(self._listen_audio())
+                        tg.create_task(self._receive_audio())
+                        tg.create_task(self._play_audio())
+                        tg.create_task(self._run_system_monitor())
+                        tg.create_task(self._run_background_monitor())
+                        tg.create_task(self._run_proactive_mode())
+                        if self._dashboard:
+                            tg.create_task(self._relay_phone_audio())
 
+                        # Morning briefing — fires once per process launch (if enabled)
+                        if not self._briefing_sent and get_brief_enabled():
+                            self._briefing_sent = True
+                            tg.create_task(self._send_startup_briefing())
+                finally:
+                    await connect_cm.__aexit__(None, None, None)
+
+            except (asyncio.TimeoutError, TimeoutError) as e:
+                print(f"[JARVIS] Connection attempt timed out: {e}")
+                self._conn_backoff = min(getattr(self, "_conn_backoff", 3) * 2, 60)
+                self.ui.write_log(
+                    f"NET: Bağlantı zaman aşımına uğradı — {self._conn_backoff}s sonra tekrar deneniyor."
+                )
             except KeyboardInterrupt:
                 raise
             except SystemExit:

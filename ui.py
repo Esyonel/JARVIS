@@ -1904,6 +1904,7 @@ class MainWindow(QMainWindow):
     _ticker_bist_sig  = pyqtSignal(list)     # BIST ticker items (thread-safe)
     _ticker_world_sig = pyqtSignal(list)     # world markets ticker items (thread-safe)
     _ticker_news_sig  = pyqtSignal(list)     # news ticker items (thread-safe)
+    _mic_level_sig    = pyqtSignal(float)    # live mic input level 0-100 (thread-safe)
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -2048,6 +2049,12 @@ class MainWindow(QMainWindow):
         self._ticker_tmr.timeout.connect(self._refresh_tickers)
         self._ticker_tmr.start(5 * 60 * 1000)
         self._refresh_tickers()
+
+        # Live mic-level meter — shows the mic is actually picking up sound,
+        # independent of whether JARVIS ends up responding.
+        self._mic_level_sig.connect(
+            lambda pct: self._bar_mic.set_value(pct, f"{pct:.0f}%")
+        )
 
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
@@ -2679,13 +2686,14 @@ class MainWindow(QMainWindow):
         lay.addWidget(hdr)
         lay.addSpacing(2)
 
+        self._bar_mic = MetricBar("MIC", C.GREEN)
         self._bar_cpu = MetricBar("CPU", C.PRI)
         self._bar_mem = MetricBar("MEM", C.ACC2)
         self._bar_net = MetricBar("NET", C.GREEN)
         self._bar_gpu = MetricBar("GPU", C.ACC)
         self._bar_tmp = MetricBar("TMP", "#ff6688")
 
-        for bar in [self._bar_cpu, self._bar_mem, self._bar_net,
+        for bar in [self._bar_mic, self._bar_cpu, self._bar_mem, self._bar_net,
                     self._bar_gpu, self._bar_tmp]:
             lay.addWidget(bar)
 
@@ -3270,7 +3278,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, '_brief_btn'):
             return
         if enabled:
-            self._brief_btn.setText("☀  MORNING BRIEF: ON")
+            self._brief_btn.setText("☀  SABAH BRİFİNGİ: AÇIK")
             self._brief_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: #001a08; color: {C.GREEN};
@@ -3280,7 +3288,7 @@ class MainWindow(QMainWindow):
                 QPushButton:hover {{ background: #002010; }}
             """)
         else:
-            self._brief_btn.setText("☀  MORNING BRIEF: OFF")
+            self._brief_btn.setText("☀  SABAH BRİFİNGİ: KAPALI")
             self._brief_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent; color: {C.TEXT_DIM};
@@ -3549,6 +3557,10 @@ class JarvisUI:
 
     def write_log(self, text: str):
         self._win._log_sig.emit(text)
+
+    def update_mic_level(self, level_pct: float):
+        """Thread-safe: update the live mic-input-level meter (MIC bar)."""
+        self._win._mic_level_sig.emit(level_pct)
 
     def wait_for_api_key(self):
         while not self._win._ready:
