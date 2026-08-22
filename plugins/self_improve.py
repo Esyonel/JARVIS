@@ -27,6 +27,7 @@ radius, so this is wrapped in a hard safety net:
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 PLUGIN = {
@@ -208,10 +209,24 @@ For editing an existing file (prefer this when changing existing behavior):
 old_string must be copied EXACTLY as it appears in the file, including
 whitespace. Keep the change minimal and focused on the request."""
 
-    resp = client.models.generate_content(model="gemini-flash-latest", contents=prompt)
-    text = (resp.text or "").strip()
-    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return json.loads(text)
+    # Gemini returns transient 503 (overloaded) / 429 (rate limit) fairly often;
+    # a single one shouldn't abandon the whole request, so retry with backoff.
+    last_error = None
+    for attempt in range(4):
+        try:
+            resp = client.models.generate_content(model="gemini-flash-latest", contents=prompt)
+            text = (resp.text or "").strip()
+            text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            return json.loads(text)
+        except Exception as e:
+            last_error = e
+            transient = any(k in str(e) for k in ("503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED"))
+            if not transient or attempt == 3:
+                raise
+            wait = 2 ** attempt  # 1s, 2s, 4s
+            print(f"[SelfImprove] Gemini busy ({type(e).__name__}), retrying in {wait}s...")
+            time.sleep(wait)
+    raise last_error
 
 
 def _validate_plan(plan: dict) -> tuple[bool, str]:

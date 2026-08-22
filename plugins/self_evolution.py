@@ -1,67 +1,109 @@
 """
-Self Evolution & Continuous Learning Plugin for JARVIS.
-Analyzes system logs, identifies optimization opportunities, and triggers self-improvement routines.
+JARVIS plugin — real self-diagnostics (system health check).
+
+This file was originally auto-written by JARVIS itself via self_improve, but
+it only *claimed* to do work: it returned "self-improvement cycle completed
+successfully" while doing nothing but counting files, and its "update_system"
+branch ran a bare `git pull` that could clobber uncommitted local work. Both
+were replaced with checks that actually run and report what they really find.
+
+For genuinely ADDING new capabilities/code, this is NOT the tool — that's
+self_improve, which drafts a real code change, validates it, and can revert.
 """
 
-import os
-import sys
 import subprocess
-import logging
+import sys
+from pathlib import Path
 
-logger = logging.getLogger(__name__)
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 PLUGIN = {
     "name": "self_evolution",
-    "description": "Analyzes system performance, scans code for potential optimizations, updates dependencies, and applies self-improvement routines.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "target": {
-                "type": "string",
-                "description": "The specific evolution task: 'scan_and_optimize', 'update_system', or 'analyze_performance'. Defaults to 'scan_and_optimize'."
-            }
-        },
-        "required": []
-    }
+    "description": (
+        "Runs a real self-diagnostic health check on JARVIS: verifies every "
+        "Python file still compiles, counts loadable vs. broken plugins, and "
+        "reports uncommitted changes. Reports what it ACTUALLY finds, including "
+        "failures. Use for: 'kendini kontrol et', 'sistem sağlığın nasıl', "
+        "'bir sorunun var mı', 'kendini test et'. This tool only INSPECTS — to "
+        "actually add a new feature or change code, use self_improve instead."
+    ),
+    "parameters": {"type": "OBJECT", "properties": {}, "required": []},
 }
 
 
 def run(parameters: dict, player=None, session_memory=None) -> str:
+    findings = []
+
+    syntax_bad = _check_all_syntax()
+    if syntax_bad:
+        findings.append(f"{len(syntax_bad)} dosyada sözdizimi hatası var: {', '.join(syntax_bad[:5])}")
+    else:
+        findings.append("Tüm Python dosyaları hatasız derleniyor")
+
+    ok_count, broken = _check_plugins()
+    if broken:
+        findings.append(f"{ok_count} eklenti çalışıyor, {len(broken)} tanesi bozuk: {', '.join(broken)}")
+    else:
+        findings.append(f"{ok_count} eklentinin hepsi sorunsuz yükleniyor")
+
+    dirty = _check_git_dirty()
+    if dirty is None:
+        findings.append("git durumu okunamadı")
+    elif dirty:
+        findings.append(f"{dirty} dosyada kaydedilmemiş değişiklik var")
+    else:
+        findings.append("kaydedilmemiş değişiklik yok")
+
+    result = "Sistem kontrolü: " + ". ".join(findings) + "."
+    _log(result, player)
+    return result
+
+
+def _check_all_syntax() -> list[str]:
+    """Returns the names of files that fail to compile (empty list = all good)."""
+    bad = []
+    for path in BASE_DIR.rglob("*.py"):
+        rel = str(path.relative_to(BASE_DIR)).replace("\\", "/")
+        if rel.startswith((".venv/", "__pycache__/", ".git/")):
+            continue
+        proc = subprocess.run(
+            [sys.executable, "-m", "py_compile", str(path)],
+            capture_output=True, text=True, timeout=20,
+        )
+        if proc.returncode != 0:
+            bad.append(path.name)
+    return bad
+
+
+def _check_plugins() -> tuple[int, list[str]]:
+    """Returns (working_count, [names of broken plugins]) using the real loader."""
     try:
-        target = parameters.get("target", "scan_and_optimize")
-        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-        if target == "update_system":
-            try:
-                res = subprocess.run(
-                    ["git", "pull"],
-                    cwd=repo_root,
-                    capture_output=True,
-                    text=True,
-                    timeout=30
-                )
-                if res.returncode == 0:
-                    return "Sistem başarıyla güncellendi ve en son sürüme senkronize edildi."
-                else:
-                    return f"Güncelleme sırasında bir uyarı oluştu: {res.stderr.strip() or 'Bilinmeyen hata'}"
-            except Exception as git_err:
-                return f"Sistem güncellemesi tamamlanamadı: {str(git_err)}"
-
-        elif target == "analyze_performance":
-            plugins_dir = os.path.join(repo_root, "plugins")
-            plugin_count = len([f for f in os.listdir(plugins_dir) if f.endswith(".py") and not f.startswith("__")]) if os.path.exists(plugins_dir) else 0
-            return f"Performans analizi tamamlandı. {plugin_count} aktif eklenti ve tüm çekirdek modüller sorunsuz çalışıyor."
-
-        else:
-            # Default: scan and optimize / self-improvement cycle
-            improvements = []
-            plugins_dir = os.path.join(repo_root, "plugins")
-            if os.path.exists(plugins_dir):
-                files = [f for f in os.listdir(plugins_dir) if f.endswith(".py")]
-                improvements.append(f"{len(files)} eklenti doğrulandı")
-
-            return "Kendini geliştirme ve optimizasyon döngüsü başarıyla çalıştırıldı. Sistem yeni yeteneklere hazır."
-
+        from core.plugin_loader import discover_plugins
+        registry = discover_plugins(BASE_DIR / "plugins", core_tool_names=set(), logger=lambda _m: None)
+        broken = [r.name for r in registry._all_records if not r.valid]
+        return len(registry._plugins), broken
     except Exception as e:
-        logger.error(f"Self-evolution error: {e}", exc_info=True)
-        return f"Kendini geliştirme işlemi sırasında bir hata oluştu: {str(e)}"
+        return 0, [f"tarama başarısız: {e}"]
+
+
+def _check_git_dirty() -> int | None:
+    """Returns the count of uncommitted changes, or None if git isn't readable."""
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(BASE_DIR), capture_output=True, text=True, timeout=15,
+        )
+        if proc.returncode != 0:
+            return None
+        return len([ln for ln in proc.stdout.splitlines() if ln.strip()])
+    except Exception:
+        return None
+
+
+def _log(message: str, player=None) -> None:
+    print(f"[SelfEvolution] {message[:300]}")
+    if player:
+        try:
+            player.write_log(f"JARVIS: {message}")
+        except Exception:
+            pass
