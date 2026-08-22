@@ -2041,6 +2041,12 @@ class MainWindow(QMainWindow):
         self._metric_tmr.start(2000)
         self._update_metrics()
 
+        # API kullanım paneli — metriklerden daha yavaş, dosyadan okuduğu için
+        self._api_tmr = QTimer(self)
+        self._api_tmr.timeout.connect(self._refresh_api_panel)
+        self._api_tmr.start(5000)
+        self._refresh_api_panel()
+
         # Ticker veri yenileme (BIST / dünya piyasaları / haberler)
         self._ticker_bist_sig.connect(self._bist_ticker.set_items)
         self._ticker_world_sig.connect(self._world_ticker.set_items)
@@ -2697,6 +2703,8 @@ class MainWindow(QMainWindow):
                     self._bar_gpu, self._bar_tmp]:
             lay.addWidget(bar)
 
+        lay.addSpacing(6)
+        lay.addWidget(self._build_api_panel())
         lay.addSpacing(4)
 
         info_panel = QWidget()
@@ -3059,6 +3067,68 @@ class MainWindow(QMainWindow):
         self._content_panel.show()
         total = self._center_split.height()
         self._center_split.setSizes([max(total - 360, 120), 360])
+
+    def _build_api_panel(self) -> QWidget:
+        """Which AI provider is in use and roughly how much of its daily
+        allowance is left. Gemini keys are listed individually because each
+        one carries its own quota, and the live voice session can only run on
+        Gemini — so 'which Gemini key still has room' is the thing that decides
+        whether JARVIS can speak at all."""
+        w = QWidget()
+        w.setStyleSheet(
+            f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 4px;"
+        )
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(6, 5, 6, 5)
+        lay.setSpacing(2)
+
+        title = QLabel("▸ API DURUMU")
+        title.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent; border: none;")
+        lay.addWidget(title)
+
+        self._api_rows_box = QVBoxLayout()
+        self._api_rows_box.setSpacing(1)
+        lay.addLayout(self._api_rows_box)
+
+        self._api_row_labels: list[QLabel] = []
+        return w
+
+    def _refresh_api_panel(self) -> None:
+        try:
+            from core.api_usage import snapshot
+            from core.gemini_keys import all_keys
+            rows = snapshot(len(all_keys()))
+        except Exception:
+            return
+
+        while len(self._api_row_labels) < len(rows):
+            lbl = QLabel("")
+            lbl.setFont(QFont("Courier New", 8))
+            lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; border: none;")
+            self._api_rows_box.addWidget(lbl)
+            self._api_row_labels.append(lbl)
+
+        for lbl, row in zip(self._api_row_labels, rows):
+            pct = row["pct"]
+            # An unknown limit must not be drawn as a number — showing a made-up
+            # percentage for a provider we cannot measure would be worse than "--".
+            pct_text = f"{pct:>3}%" if pct is not None else " --"
+            marker = "●" if row["active"] else " "
+            lbl.setText(f"{marker} {row['label']:<11}{pct_text}")
+
+            if row["active"]:
+                colour = C.GREEN
+            elif pct is not None and pct <= 20:
+                colour = C.RED
+            elif pct is not None and pct <= 50:
+                colour = C.ACC2
+            else:
+                colour = C.TEXT_DIM
+            lbl.setStyleSheet(f"color: {colour}; background: transparent; border: none;")
+
+        for lbl in self._api_row_labels[len(rows):]:
+            lbl.setText("")
 
     def _build_ticker_stack(self) -> QWidget:
         """Three stacked scrolling ticker bars: BIST hisseleri (top), dünya

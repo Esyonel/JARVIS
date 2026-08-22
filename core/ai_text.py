@@ -74,14 +74,19 @@ def generate(prompt: str, model: str | None = None) -> str:
     # that realtime audio API. Spending that quota on text work would silently
     # cost the voice assistant its voice, so text falls to the other providers
     # first and only reaches Gemini if every one of them is unavailable.
+    from core.api_usage import record
+
     for key_name, base_url, default_model in _OPENAI_COMPATIBLE:
         key = cfg.get(key_name)
         if not key:
             continue
+        provider = key_name.replace("_api_key", "")
         try:
-            return _openai_compatible(key, base_url, default_model, prompt)
+            text = _openai_compatible(key, base_url, default_model, prompt)
+            record(provider)
+            return text
         except Exception as e:
-            failures.append(f"{key_name.replace('_api_key', '')}: {str(e)[:120]}")
+            failures.append(f"{provider}: {str(e)[:120]}")
 
     from core.gemini_keys import call_with_rotation, all_keys
     if all_keys():

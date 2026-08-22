@@ -97,10 +97,14 @@ def call_with_rotation(fn, *args, **kwargs):
     if not keys:
         raise RuntimeError("No Gemini API key configured.")
 
+    from core.api_usage import record
+
     last_error: Exception | None = None
     for key in keys:
         try:
-            return fn(key, *args, **kwargs)
+            result = fn(key, *args, **kwargs)
+            record(label_for(key))
+            return result
         except Exception as e:
             if not is_exhausted(e):
                 raise
@@ -109,3 +113,12 @@ def call_with_rotation(fn, *args, **kwargs):
             print(f"[GeminiKeys] Bir anahtarın kotası doldu, sıradakine geçiliyor "
                   f"({keys.index(key) + 1}/{len(keys)}).")
     raise last_error or RuntimeError("All Gemini keys exhausted.")
+
+
+def label_for(key: str) -> str:
+    """'gemini-1', 'gemini-2', ... by the key's position in the configured pool,
+    so the UI can show which specific key is in use without ever showing the key."""
+    try:
+        return f"gemini-{all_keys().index(key) + 1}"
+    except ValueError:
+        return "gemini-?"

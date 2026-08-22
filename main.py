@@ -1572,6 +1572,14 @@ class JarvisLive:
                         self._interrupted          = False
 
                         print("[JARVIS] Connected.")
+                        # Count the live session against the key that carried it,
+                        # so the UI panel reflects voice usage too — not just text.
+                        try:
+                            from core.api_usage import record
+                            from core.gemini_keys import label_for
+                            record(label_for(_get_api_key()))
+                        except Exception:
+                            pass
                         self.ui.set_state("LISTENING")
                         self.ui.write_log("SYS: JARVIS online.")
 
