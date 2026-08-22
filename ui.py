@@ -24,8 +24,8 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont,
-    QFontDatabase, QKeySequence, QLinearGradient, QPainter, QPainterPath,
-    QPen, QPixmap, QRadialGradient, QShortcut,
+    QFontDatabase, QFontMetrics, QKeySequence, QLinearGradient, QPainter,
+    QPainterPath, QPen, QPixmap, QRadialGradient, QShortcut,
 )
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
@@ -656,7 +656,7 @@ class LogWidget(QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setReadOnly(True)
-        self.setFont(QFont("Courier New", 9))
+        self.setFont(QFont("Courier New", 10))
         self.setStyleSheet(f"""
             QTextEdit {{
                 background: {C.PANEL};
@@ -737,6 +737,61 @@ class LogWidget(QTextEdit):
             self.setTextCursor(cur)
             self.ensureCursorVisible()
             QTimer.singleShot(20, self._next)
+
+class TickerBar(QWidget):
+    """Single-line horizontally scrolling marquee — used for the BIST, world
+    markets, and news ticker strips at the bottom of the window."""
+
+    def __init__(self, label: str, color: str, bg: str, font_size: int = 10, speed: int = 2, parent=None):
+        super().__init__(parent)
+        self._label = label
+        self._color = color
+        self._font = QFont("Courier New", font_size, QFont.Weight.Bold)
+        self._text = ""
+        self._offset = 0
+        self._speed = speed
+        self.setFixedHeight(font_size + 16)
+        self.setStyleSheet(f"background: {bg};")
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(30)
+
+    def set_items(self, items: list[str]) -> None:
+        sep = "     •     "
+        joined = sep.join(items) if items else "veri bekleniyor..."
+        self._text = joined + sep
+        self._offset = self.width()
+        self.update()
+
+    def _tick(self) -> None:
+        if not self._text:
+            return
+        self._offset -= self._speed
+        fm = QFontMetrics(self._font)
+        text_width = fm.horizontalAdvance(self._text)
+        if self._offset < -text_width:
+            self._offset = self.width()
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setFont(self._font)
+        fm = QFontMetrics(self._font)
+        y = (self.height() + fm.ascent() - fm.descent()) // 2
+
+        label_w = 0
+        if self._label:
+            painter.setPen(qcol(self._color))
+            painter.drawText(6, y, self._label)
+            label_w = fm.horizontalAdvance(self._label) + 14
+
+        painter.setPen(qcol(C.TEXT))
+        text = self._text or ""
+        text_width = fm.horizontalAdvance(text)
+        painter.drawText(label_w + self._offset, y, text)
+        painter.drawText(label_w + self._offset + text_width, y, text)
+
 
 _FILE_ICONS = {
     "image":   ("🖼", "#00d4ff"), "video":   ("🎬", "#ff6b00"),
@@ -892,7 +947,7 @@ class _DropCanvas(QWidget):
         p.setFont(QFont("Courier New", 8))
         p.setPen(QPen(qcol(C.PRI_DIM if not hover else C.TEXT), 1))
         p.drawText(QRectF(0, cy + 8, W, 16), Qt.AlignmentFlag.AlignCenter,
-                   "Drop file here  or  Click to Browse")
+                   "Dosyayı buraya bırakın  veya  Gözat'a tıklayın")
         p.setFont(QFont("Courier New", 7))
         p.setPen(QPen(qcol("#1a4a5a"), 1))
         p.drawText(QRectF(0, cy + 24, W, 14), Qt.AlignmentFlag.AlignCenter,
@@ -905,7 +960,7 @@ class _DropCanvas(QWidget):
         p.drawText(QRectF(0, cy - 24, W, 32), Qt.AlignmentFlag.AlignCenter, "⬇")
         p.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         p.setPen(QPen(qcol(C.PRI), 1))
-        p.drawText(QRectF(0, cy + 12, W, 16), Qt.AlignmentFlag.AlignCenter, "Release to load")
+        p.drawText(QRectF(0, cy + 12, W, 16), Qt.AlignmentFlag.AlignCenter, "Yüklemek için bırakın")
 
     def _paint_file(self, p, W, H):
         path = Path(self._z._current_file)
@@ -1053,14 +1108,14 @@ class SetupOverlay(QWidget):
             return w
 
         layout.addWidget(_lbl("◈  INITIALISATION REQUIRED", 13, True))
-        layout.addWidget(_lbl("Configure J.A.R.V.I.S. before first boot.", 9, color=C.PRI_DIM))
+        layout.addWidget(_lbl("İlk açılıştan önce J.A.R.V.I.S.'i yapılandırın.", 9, color=C.PRI_DIM))
         layout.addSpacing(6)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep)
         layout.addSpacing(4)
 
-        layout.addWidget(_lbl("GEMINI API KEY", 8, color=C.TEXT_DIM,
+        layout.addWidget(_lbl("GEMINI API ANAHTARI", 8, color=C.TEXT_DIM,
                                align=Qt.AlignmentFlag.AlignLeft))
         self._key_input = QLineEdit()
         self._key_input.setEchoMode(QLineEdit.EchoMode.Password)
@@ -1081,7 +1136,7 @@ class SetupOverlay(QWidget):
         sep2.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep2)
         layout.addSpacing(4)
 
-        layout.addWidget(_lbl("OPERATING SYSTEM", 8, color=C.TEXT_DIM,
+        layout.addWidget(_lbl("İŞLETİM SİSTEMİ", 8, color=C.TEXT_DIM,
                                align=Qt.AlignmentFlag.AlignLeft))
         det_name = {"windows": "Windows", "mac": "macOS", "linux": "Linux"}[detected]
         layout.addWidget(_lbl(f"Auto-detected: {det_name}", 8, color=C.ACC2,
@@ -1277,7 +1332,7 @@ class CustomizeOverlay(QWidget):
         sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
         lay.addWidget(sep)
 
-        lay.addWidget(_lbl("ASSISTANT NAME", 8, color=C.TEXT_DIM,
+        lay.addWidget(_lbl("ASİSTAN ADI", 8, color=C.TEXT_DIM,
                             align=Qt.AlignmentFlag.AlignLeft))
         self._name_input = QLineEdit(assistant_name)
         self._name_input.setFont(QFont("Courier New", 10))
@@ -1301,7 +1356,7 @@ class CustomizeOverlay(QWidget):
         clr_hdr.addWidget(_lbl("UI COLOUR  —  drag the handle", 8,
                                color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft))
         clr_hdr.addStretch()
-        df_btn = QPushButton("DEFAULT")
+        df_btn = QPushButton("VARSAYILAN")
         df_btn.setFixedSize(64, 20)
         df_btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
         df_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1352,7 +1407,7 @@ class CustomizeOverlay(QWidget):
         save_btn.clicked.connect(self._save)
         btn_row.addWidget(save_btn)
 
-        cancel_btn = QPushButton("CANCEL")
+        cancel_btn = QPushButton("İPTAL")
         cancel_btn.setFixedHeight(34)
         cancel_btn.setFont(QFont("Courier New", 9))
         cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1442,7 +1497,7 @@ class PluginManagerOverlay(QWidget):
         lay.addWidget(sep)
 
         if not plugins:
-            empty = QLabel("No plugins found in /plugins.")
+            empty = QLabel("plugins/ klasöründe eklenti bulunamadı.")
             empty.setFont(QFont("Courier New", 8))
             empty.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
             lay.addWidget(empty)
@@ -1451,7 +1506,7 @@ class PluginManagerOverlay(QWidget):
             lay.addLayout(self._build_row(p))
 
         lay.addSpacing(4)
-        close_btn = QPushButton("CLOSE")
+        close_btn = QPushButton("KAPAT")
         close_btn.setFixedHeight(30)
         close_btn.setFont(QFont("Courier New", 9))
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1481,7 +1536,7 @@ class PluginManagerOverlay(QWidget):
         btn.setFixedSize(72, 24)
         btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
         if not p["valid"]:
-            btn.setText("BROKEN")
+            btn.setText("BOZUK")
             btn.setEnabled(False)
             btn.setStyleSheet(f"""
                 QPushButton {{
@@ -1575,10 +1630,10 @@ class ClipboardPanel(QWidget):
                f"border: 1px solid {C.BORDER}; border-radius: 2px; }}"
                f"QPushButton:hover {{ color: {C.PRI}; border-color: {C.BORDER_B}; }}")
         for label, cmd_fmt in [
-            ("TRANSLATE", "Translate this text to English: {text}"),
-            ("SUMMARISE", "Summarise this: {text}"),
-            ("EXPLAIN",   "Explain this: {text}"),
-            ("FIX",       "Fix grammar and spelling: {text}"),
+            ("ÇEVİR",   "Translate this text to Turkish if it isn't already Turkish, otherwise to English: {text}"),
+            ("ÖZETLE",  "Summarise this: {text}"),
+            ("AÇIKLA",  "Explain this: {text}"),
+            ("DÜZELT",  "Fix grammar and spelling: {text}"),
         ]:
             b = QPushButton(label)
             b.setFixedHeight(22)
@@ -1672,7 +1727,7 @@ class RemoteKeyOverlay(QWidget):
         sep2.setStyleSheet(f"color: {C.BORDER}; margin: 1px 0;")
         lay.addWidget(sep2)
 
-        lay.addWidget(_lbl("Or enter manually:", 7, color=C.TEXT_DIM,
+        lay.addWidget(_lbl("Veya elle girin:", 7, color=C.TEXT_DIM,
                            align=Qt.AlignmentFlag.AlignLeft))
 
         self._url_lbl = QLabel(self._manual_url)
@@ -1703,7 +1758,7 @@ class RemoteKeyOverlay(QWidget):
         lay.addWidget(self._timer_lbl)
 
         btn_row = QHBoxLayout(); btn_row.setSpacing(8)
-        new_btn = QPushButton("NEW KEY")
+        new_btn = QPushButton("YENİ ANAHTAR")
         new_btn.setFixedHeight(32)
         new_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         new_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1717,7 +1772,7 @@ class RemoteKeyOverlay(QWidget):
         new_btn.clicked.connect(self._refresh_key)
         btn_row.addWidget(new_btn)
 
-        close_btn = QPushButton("DISMISS")
+        close_btn = QPushButton("KAPAT")
         close_btn.setFixedHeight(32)
         close_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1786,7 +1841,7 @@ class RemoteKeyOverlay(QWidget):
     def mark_connected(self) -> None:
         """Call from any thread when a phone successfully connects."""
         self._ctimer.stop()
-        self._key_lbl.setText("CONNECTED")
+        self._key_lbl.setText("BAĞLANDI")
         self._key_lbl.setStyleSheet(f"""
             color: {C.GREEN};
             background: rgba(34,197,94,0.08);
@@ -1846,6 +1901,9 @@ class MainWindow(QMainWindow):
     _cam_stream_sig = pyqtSignal(bool)       # True=start live stream, False=stop
     _cam_frame_sig  = pyqtSignal(bytes)      # live camera frame → HUD area
     _clipboard_sig  = pyqtSignal(str)        # clipboard text changed (thread-safe)
+    _ticker_bist_sig  = pyqtSignal(list)     # BIST ticker items (thread-safe)
+    _ticker_world_sig = pyqtSignal(list)     # world markets ticker items (thread-safe)
+    _ticker_news_sig  = pyqtSignal(list)     # news ticker items (thread-safe)
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -1875,7 +1933,7 @@ class MainWindow(QMainWindow):
         self.on_remote_clicked = None   # callable: () -> (url, key) | None
         self.on_interrupt      = None   # callable: () -> None — stop JARVIS mid-speech
         self.get_plugins       = None   # callable: () -> list[dict], set by JarvisLive
-        self._muted            = False
+        self._muted            = True   # başlangıçta mikrofon kapalı — kullanıcı elle aktif eder
         self._current_file: str | None = None
         self._remote_overlay: RemoteKeyOverlay | None = None
         self._customize_overlay: CustomizeOverlay | None = None
@@ -1898,6 +1956,7 @@ class MainWindow(QMainWindow):
 
         # Center column: HUD + resizable content panel via QSplitter
         self.hud = HudCanvas(face_path, _display)
+        self.hud.muted = True
         self.hud.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._content_panel = self._build_content_panel()
 
@@ -1909,12 +1968,12 @@ class MainWindow(QMainWindow):
         _cam_v.setSpacing(0)
         _cam_hdr = QHBoxLayout()
         _cam_hdr.setContentsMargins(8, 5, 8, 5)
-        _cam_title = QLabel("◈  CAMERA FEED")
+        _cam_title = QLabel("◈  KAMERA GÖRÜNTÜSÜ")
         _cam_title.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         _cam_title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         _cam_hdr.addWidget(_cam_title)
         _cam_hdr.addStretch()
-        _cam_x = QPushButton("✕  CLOSE")
+        _cam_x = QPushButton("✕  KAPAT")
         _cam_x.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         _cam_x.setCursor(Qt.CursorShape.PointingHandCursor)
         _cam_x.setStyleSheet(f"""
@@ -1961,6 +2020,7 @@ class MainWindow(QMainWindow):
         body.addWidget(self._right_panel, stretch=0)
 
         root.addLayout(body, stretch=1)
+        root.addWidget(self._build_ticker_stack())
         root.addWidget(self._build_footer())
 
         # Quick-access drawer (floating overlay, built after central widget layout is done)
@@ -1979,6 +2039,15 @@ class MainWindow(QMainWindow):
         self._metric_tmr.timeout.connect(self._update_metrics)
         self._metric_tmr.start(2000)
         self._update_metrics()
+
+        # Ticker veri yenileme (BIST / dünya piyasaları / haberler)
+        self._ticker_bist_sig.connect(self._bist_ticker.set_items)
+        self._ticker_world_sig.connect(self._world_ticker.set_items)
+        self._ticker_news_sig.connect(self._news_ticker.set_items)
+        self._ticker_tmr = QTimer(self)
+        self._ticker_tmr.timeout.connect(self._refresh_tickers)
+        self._ticker_tmr.start(5 * 60 * 1000)
+        self._refresh_tickers()
 
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
@@ -2652,9 +2721,9 @@ class MainWindow(QMainWindow):
         lay.addStretch()
 
         for txt, col in [
-            ("AI CORE\nACTIVE",  C.GREEN),
-            ("SEC\nCLEARED",     C.PRI),
-            ("PROTOCOL\nXLIX",   C.TEXT_DIM),
+            ("YZ ÇEKİRDEĞİ\nAKTİF", C.GREEN),
+            ("GÜVENLİK\nTEMİZ",     C.PRI),
+            ("PROTOKOL\nXLIX",      C.TEXT_DIM),
         ]:
             lbl = QLabel(txt)
             lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
@@ -2680,7 +2749,7 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
             return l
 
-        lay.addWidget(_sec("ACTIVITY LOG"))
+        lay.addWidget(_sec("ETKİNLİK GÜNLÜĞÜ"))
         self._log = LogWidget()
         lay.addWidget(self._log, stretch=1)
 
@@ -2688,12 +2757,12 @@ class MainWindow(QMainWindow):
         sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
         lay.addWidget(sep)
 
-        lay.addWidget(_sec("FILE UPLOAD"))
+        lay.addWidget(_sec("DOSYA YÜKLE"))
         self._drop_zone = FileDropZone()
         self._drop_zone.file_selected.connect(self._on_file_selected)
         lay.addWidget(self._drop_zone)
 
-        self._file_hint = QLabel("No file loaded — drop or click above to upload")
+        self._file_hint = QLabel("Dosya yüklenmedi — yüklemek için sürükleyin veya yukarıya tıklayın")
         self._file_hint.setFont(QFont("Courier New", 7))
         self._file_hint.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
         self._file_hint.setWordWrap(True)
@@ -2703,10 +2772,10 @@ class MainWindow(QMainWindow):
         sep2.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
         lay.addWidget(sep2)
 
-        lay.addWidget(_sec("COMMAND INPUT"))
+        lay.addWidget(_sec("KOMUT GİRİŞİ"))
         lay.addLayout(self._build_input_row())
 
-        self._interrupt_btn = QPushButton("✋  INTERRUPT  [ESC]")
+        self._interrupt_btn = QPushButton("✋  DURDUR  [ESC]")
         self._interrupt_btn.setFixedHeight(34)
         self._interrupt_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         self._interrupt_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -2725,7 +2794,7 @@ class MainWindow(QMainWindow):
         self._interrupt_btn.clicked.connect(self._do_interrupt)
         lay.addWidget(self._interrupt_btn)
 
-        self._mute_btn = QPushButton("🎙  MICROPHONE ACTIVE")
+        self._mute_btn = QPushButton("🎙  MİKROFON AÇIK")
         self._mute_btn.setFixedHeight(30)
         self._mute_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         self._mute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -2852,7 +2921,7 @@ class MainWindow(QMainWindow):
     def _build_input_row(self) -> QHBoxLayout:
         row = QHBoxLayout(); row.setSpacing(5)
         self._input = QLineEdit()
-        self._input.setPlaceholderText("Type a command or question…")
+        self._input.setPlaceholderText("Bir komut veya soru yazın…")
         self._input.setFont(QFont("Courier New", 9))
         self._input.setFixedHeight(30)
         self._input.setStyleSheet(f"""
@@ -2907,7 +2976,7 @@ class MainWindow(QMainWindow):
         dot.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         hdr.addWidget(dot)
 
-        self._content_title_lbl = QLabel("BRIEFING")
+        self._content_title_lbl = QLabel("BRİFİNG")
         self._content_title_lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         self._content_title_lbl.setStyleSheet(
             f"color: {C.PRI}; background: transparent; letter-spacing: 1px;"
@@ -2920,7 +2989,7 @@ class MainWindow(QMainWindow):
         self._content_ts_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
         hdr.addWidget(self._content_ts_lbl)
 
-        dismiss = QPushButton("DISMISS  ✕")
+        dismiss = QPushButton("KAPAT  ✕")
         dismiss.setFont(QFont("Courier New", 7))
         dismiss.setFixedHeight(18)
         dismiss.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -2942,7 +3011,7 @@ class MainWindow(QMainWindow):
         # ── text display ──────────────────────────────────────────────────────
         self._content_display = QTextEdit()
         self._content_display.setReadOnly(True)
-        self._content_display.setFont(QFont("Courier New", 8))
+        self._content_display.setFont(QFont("Courier New", 10))
         self._content_display.setMinimumHeight(60)
         self._content_display.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
@@ -2979,11 +3048,48 @@ class MainWindow(QMainWindow):
         self._content_display.moveCursor(
             self._content_display.textCursor().MoveOperation.Start
         )
-        first_show = not self._content_panel.isVisible()
         self._content_panel.show()
-        if first_show:
-            total = self._center_split.height()
-            self._center_split.setSizes([max(total - 220, 120), 220])
+        total = self._center_split.height()
+        self._center_split.setSizes([max(total - 360, 120), 360])
+
+    def _build_ticker_stack(self) -> QWidget:
+        """Three stacked scrolling ticker bars: BIST hisseleri (top), dünya
+        borsaları/kripto (middle), dünya haberleri (bottom). Full width,
+        refreshed periodically by _refresh_tickers()."""
+        w = QWidget()
+        w.setStyleSheet(f"background: {C.DARK}; border-top: 1px solid {C.BORDER};")
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(1)
+
+        self._bist_ticker  = TickerBar("BIST",   C.GREEN, C.DARK)
+        self._world_ticker = TickerBar("DÜNYA",  C.PRI,   C.PANEL)
+        self._news_ticker  = TickerBar("HABER",  C.ACC2,  C.DARK)
+
+        lay.addWidget(self._bist_ticker)
+        lay.addWidget(self._world_ticker)
+        lay.addWidget(self._news_ticker)
+        return w
+
+    def _refresh_tickers(self) -> None:
+        """Fetches fresh BIST/world/news data in a background thread — never
+        blocks the UI thread, never raises (each source fails independently)."""
+        def _worker():
+            from core import ticker_data
+            try:
+                self._ticker_bist_sig.emit(ticker_data.fetch_bist_items())
+            except Exception as e:
+                print(f"[Ticker] BIST fetch failed: {e}")
+            try:
+                self._ticker_world_sig.emit(ticker_data.fetch_world_items())
+            except Exception as e:
+                print(f"[Ticker] World fetch failed: {e}")
+            try:
+                self._ticker_news_sig.emit(ticker_data.fetch_news_items())
+            except Exception as e:
+                print(f"[Ticker] News fetch failed: {e}")
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _build_footer(self) -> QWidget:
         w = QWidget()
@@ -2996,7 +3102,7 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {color}; background: transparent;")
             return l
 
-        lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
+        lay.addWidget(_fl("[F4] Sessize Al  ·  [F11] Tam Ekran"))
         lay.addStretch()
         lay.addWidget(_fl("By FatihMakes", C.PRI_DIM))
         return w
@@ -3007,7 +3113,7 @@ class MainWindow(QMainWindow):
         cat  = _file_category(p)
         icon, _ = _FILE_ICONS.get(cat, _FILE_ICONS["unknown"])
         size = _fmt_size(p.stat().st_size)
-        self._file_hint.setText(f"{icon}  {p.name}  ·  {size}  ·  Tell {self._assistant_name} what to do with it")
+        self._file_hint.setText(f"{icon}  {p.name}  ·  {size}  ·  {self._assistant_name}'e ne yapacağını söyle")
         self._log.append_log(f"FILE: {p.name} ({size}) loaded")
         if self.on_text_command:
             msg = (
@@ -3302,14 +3408,14 @@ class MainWindow(QMainWindow):
         self._style_mute_btn()
         if self._muted:
             self._apply_state("MUTED")
-            self._log.append_log("SYS: Microphone muted.")
+            self._log.append_log("SYS: Mikrofon kapatıldı.")
         else:
             self._apply_state("LISTENING")
-            self._log.append_log("SYS: Microphone active.")
+            self._log.append_log("SYS: Mikrofon açık.")
 
     def _style_mute_btn(self):
         if self._muted:
-            self._mute_btn.setText("🔇  MICROPHONE MUTED")
+            self._mute_btn.setText("🔇  MİKROFON KAPALI")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: #140006; color: {C.MUTED_C};
@@ -3317,7 +3423,7 @@ class MainWindow(QMainWindow):
                 }}
             """)
         else:
-            self._mute_btn.setText("🎙  MICROPHONE ACTIVE")
+            self._mute_btn.setText("🎙  MİKROFON AÇIK")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: #00140a; color: {C.GREEN};

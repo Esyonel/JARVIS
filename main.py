@@ -58,6 +58,7 @@ from actions.background_monitor import (
     add_monitor, remove_monitor, list_monitors, check_all as monitor_check_all,
 )
 from actions.web_search        import _news as _fetch_news_sync
+from actions.web_search        import _tr_news_rss
 from memory.config_manager     import get_brief_enabled
 from core.plugin_loader        import discover_plugins
 
@@ -69,6 +70,24 @@ def get_base_dir():
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
+
+def _fetch_briefing_news() -> str:
+    """RSS-first (no API quota, no rate limiting) with Gemini/DDG as a fallback
+    only if every RSS feed happened to fail."""
+    text = _tr_news_rss()
+    if text:
+        return text
+    return _fetch_news_sync("Türkiye'den bugünkü önemli haberler")
+
+
+_TR_NEWSPAPERS_BLOCK = (
+    "Türkiye gazeteleri — ana sayfalar:\n"
+    "Hürriyet: https://www.hurriyet.com.tr\n"
+    "Sabah: https://www.sabah.com.tr\n"
+    "Milliyet: https://www.milliyet.com.tr\n"
+    "NTV: https://www.ntv.com.tr\n"
+    "Sözcü: https://www.sozcu.com.tr"
+)
 LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
@@ -950,15 +969,53 @@ class JarvisLive:
         print("[JARVIS] 🎤 Mic started")
         loop = asyncio.get_event_loop()
 
+        from core import voice_id
+        voice_gate_enabled = voice_id.is_enrolled()
+        if voice_gate_enabled:
+            print("[JARVIS] 🔒 Voice lock active — only the enrolled voice will be forwarded.")
+
+        raw_queue: asyncio.Queue = asyncio.Queue()
+        _WINDOW_BYTES = int(SEND_SAMPLE_RATE * 1.6) * 2  # ~1.6 s of 16-bit mono PCM per voice check
+        _BLOCK_SECONDS = 3.0  # how long to mute after a non-owner voice is detected
+
         def callback(indata, frames, time_info, status):
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
             if not jarvis_speaking and not self.ui.muted and not self._phone_active:
                 data = indata.tobytes()
-                loop.call_soon_threadsafe(
-                    self.out_queue.put_nowait,
-                    {"data": data, "mime_type": "audio/pcm"}
-                )
+                loop.call_soon_threadsafe(raw_queue.put_nowait, data)
+
+        async def gate_and_forward():
+            # Forward-first, verify-after: audio is streamed to Gemini immediately
+            # (zero added latency for the normal case) while a rolling ~1.6s window
+            # is checked in the background. Only on a MISMATCH do we start muting —
+            # this trades a brief (~1.6s) leak of a stranger's voice for keeping the
+            # owner's own latency exactly what it was before voice-lock existed.
+            pending = bytearray()
+            blocked_until = 0.0
+            while True:
+                chunk = await raw_queue.get()
+                now = time.monotonic()
+
+                if not voice_gate_enabled or voice_id.is_gate_disabled():
+                    self.out_queue.put_nowait({"data": chunk, "mime_type": "audio/pcm"})
+                    continue
+
+                if now >= blocked_until:
+                    self.out_queue.put_nowait({"data": chunk, "mime_type": "audio/pcm"})
+
+                pending += chunk
+                if len(pending) >= _WINDOW_BYTES:
+                    window = bytes(pending)
+                    pending.clear()
+                    try:
+                        matched = await loop.run_in_executor(
+                            None, voice_id.matches_owner, window
+                        )
+                    except Exception as e:
+                        print(f"[JARVIS] Voice check error, letting audio through: {e}")
+                        matched = True
+                    blocked_until = 0.0 if matched else (time.monotonic() + _BLOCK_SECONDS)
 
         try:
             with sd.InputStream(
@@ -969,8 +1026,7 @@ class JarvisLive:
                 callback=callback,
             ):
                 print("[JARVIS] 🎤 Mic stream open")
-                while True:
-                    await asyncio.sleep(0.1)
+                await gate_and_forward()
         except Exception as e:
             print(f"[JARVIS] ❌ Mic: {e}")
             raise
@@ -1167,7 +1223,7 @@ class JarvisLive:
 
         # Start fetching news immediately — runs in parallel while phase 1 plays
         loop = asyncio.get_event_loop()
-        news_future = loop.run_in_executor(None, _fetch_news_sync, "top world news today")
+        news_future = loop.run_in_executor(None, _fetch_briefing_news)
 
         await asyncio.sleep(0.3)
         if not self.session:
@@ -1231,7 +1287,11 @@ class JarvisLive:
                     await asyncio.sleep(1.0)
 
                 try:
-                    news_text = await asyncio.wait_for(news_done, timeout=4.0)
+                    # RSS (primary) waits up to ~7s; if every feed fails it falls back to
+                    # Gemini/DDG (_news(), up to 10s internally) — this outer timeout must
+                    # comfortably exceed the worst-case combined wait, or we'd give up right
+                    # before the fetch was about to succeed.
+                    news_text = await asyncio.wait_for(news_done, timeout=18.0)
                 except Exception:
                     news_text = ""
 
@@ -1239,13 +1299,15 @@ class JarvisLive:
                     return
 
                 if news_text and len(news_text) > 60:
-                    # Show on UI content panel immediately
-                    self.ui.show_content("NEWS — top world news today", news_text)
+                    # Show on UI content panel immediately, alongside Turkish newspaper homepages
+                    panel_text = news_text + "\n\n" + _TR_NEWSPAPERS_BLOCK
+                    self.ui.show_content("HABERLER — Türkiye", panel_text)
 
                     p2 = (
-                        f"[BRIEFING] Here are today's top news headlines:\n{news_text}\n\n"
+                        f"[BRIEFING] Here are today's top news headlines from Turkey:\n{news_text}\n\n"
                         "Pick ONE headline, summarise it in one sentence, then say the full list "
-                        f"is displayed on screen. Do not call any tools.{lang_str}"
+                        "and links to today's Turkish newspaper front pages are displayed on screen. "
+                        f"Do not call any tools.{lang_str}"
                     )
                 else:
                     p2 = (
@@ -1458,7 +1520,18 @@ class JarvisLive:
             from dashboard.server import DashboardServer
             self._dashboard = DashboardServer()
             self._dashboard.set_connect_callback(self._on_phone_connected)
-            asyncio.create_task(self._dashboard.serve())
+
+            async def _run_dashboard_safely():
+                # uvicorn calls sys.exit() (SystemExit, a BaseException) on a bind
+                # failure — e.g. port 8000 already used by another app. Left
+                # uncaught, that would propagate out of this fire-and-forget task
+                # and take down the whole event loop, not just the dashboard.
+                try:
+                    await self._dashboard.serve()
+                except (SystemExit, Exception) as e:
+                    print(f"[Dashboard] Failed to start (port 8000 busy?): {e}")
+
+            asyncio.create_task(_run_dashboard_safely())
             # Runs for the whole lifetime, not just inside an active session
             asyncio.create_task(self._process_dashboard_commands())
         except Exception as e:

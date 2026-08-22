@@ -3,6 +3,8 @@ import json
 import sys
 from pathlib import Path
 
+import requests
+
 def _get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
@@ -109,6 +111,55 @@ def _format_news(query: str, results: list[dict]) -> str:
             lines.append(f"   {r['url']}")
         lines.append("")
     return "\n".join(lines).strip()
+
+
+# ── Turkish RSS headlines (briefing) ────────────────────────────────────────────
+# Gemini grounded search needs quota and DDG news is frequently rate-limited (403) —
+# both proved unreliable for the morning briefing. RSS feeds need neither: no API
+# key, no quota, no scraping-detection, and they're Turkey-specific by construction.
+
+_TR_RSS_FEEDS = [
+    ("Hürriyet", "https://www.hurriyet.com.tr/rss/anasayfa"),
+    ("NTV",      "https://www.ntv.com.tr/gundem.rss"),
+    ("Sabah",    "https://www.sabah.com.tr/rss/anasayfa.xml"),
+]
+_RSS_HEADERS = {"User-Agent": "Mozilla/5.0 (JARVIS briefing)"}
+
+
+def _tr_news_rss(per_source: int = 5, timeout: int = 6) -> str:
+    """Fetches Turkish headlines from newspaper RSS feeds in parallel. Never raises —
+    returns an empty string if every feed fails."""
+    import threading
+    import xml.etree.ElementTree as ET
+
+    lines: list[str] = []
+    lock = threading.Lock()
+
+    def _fetch_one(name: str, url: str) -> None:
+        try:
+            r = requests.get(url, headers=_RSS_HEADERS, timeout=timeout)
+            r.raise_for_status()
+            root = ET.fromstring(r.content)
+            titles = [
+                (t.text or "").strip()
+                for t in root.findall(".//item/title")
+                if t.text and t.text.strip()
+            ][:per_source]
+            if titles:
+                with lock:
+                    lines.append(f"{name}:\n" + "\n".join(f"- {t}" for t in titles))
+        except Exception as e:
+            print(f"[WebSearch] TR RSS '{name}' failed: {e}")
+
+    threads = [threading.Thread(target=_fetch_one, args=(n, u), daemon=True) for n, u in _TR_RSS_FEEDS]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=timeout + 1)
+
+    if not lines:
+        return ""
+    return "Türkiye'den bugünkü başlıklar:\n\n" + "\n\n".join(lines)
 
 
 # ── Briefing helper ────────────────────────────────────────────────────────────
