@@ -75,8 +75,8 @@ def propose_new_capability(existing: list[str]) -> str:
         "Reply with ONE sentence in Turkish describing the feature to build. "
         "No preamble, no markdown, just the sentence."
     )
-    resp = client.models.generate_content(model="gemini-flash-latest", contents=prompt)
-    return (resp.text or "").strip().strip('"')
+    from plugins.self_improve import gemini_with_retry
+    return gemini_with_retry(client, prompt).strip('"')
 
 
 def main() -> int:

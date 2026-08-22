@@ -219,24 +219,28 @@ For editing an existing file (prefer this when changing existing behavior):
 old_string must be copied EXACTLY as it appears in the file, including
 whitespace. Keep the change minimal and focused on the request."""
 
-    # Gemini returns transient 503 (overloaded) / 429 (rate limit) fairly often;
-    # a single one shouldn't abandon the whole request, so retry with backoff.
-    last_error = None
-    for attempt in range(4):
+    text = gemini_with_retry(client, prompt)
+    text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    return json.loads(text)
+
+
+def gemini_with_retry(client, prompt: str, model: str = "gemini-flash-latest",
+                      attempts: int = 4) -> str:
+    """Gemini returns transient 503 (overloaded) / 429 (rate limit) fairly often;
+    a single one shouldn't abandon the whole request. Shared by the unattended
+    daily evolution run, which hits the same failures."""
+    for attempt in range(attempts):
         try:
-            resp = client.models.generate_content(model="gemini-flash-latest", contents=prompt)
-            text = (resp.text or "").strip()
-            text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-            return json.loads(text)
+            resp = client.models.generate_content(model=model, contents=prompt)
+            return (resp.text or "").strip()
         except Exception as e:
-            last_error = e
             transient = any(k in str(e) for k in ("503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED"))
-            if not transient or attempt == 3:
+            if not transient or attempt == attempts - 1:
                 raise
             wait = 2 ** attempt  # 1s, 2s, 4s
             print(f"[SelfImprove] Gemini busy ({type(e).__name__}), retrying in {wait}s...")
             time.sleep(wait)
-    raise last_error
+    raise RuntimeError("unreachable")
 
 
 def _validate_plan(plan: dict) -> tuple[bool, str]:
