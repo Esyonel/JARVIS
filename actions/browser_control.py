@@ -519,7 +519,18 @@ class _BrowserSession:
         Context zaten açıksa hiçbir şey yapmaz.
         """
         if self._context is not None:
-            return
+            # A context object outlives the browser it belonged to. If the user
+            # closed the window (or it crashed), every later new_page() raises
+            # "Target page, context or browser has been closed" forever, because
+            # this early return keeps handing back the dead context. Probe it and
+            # relaunch when it's gone.
+            try:
+                _ = self._context.pages
+                return
+            except Exception:
+                print("[Browser] Context is dead — relaunching.")
+                self._context = None
+                self._page = None
 
         if self._spec is None:
             raise RuntimeError(
@@ -628,7 +639,17 @@ class _BrowserSession:
         await self._launch()
         # If somehow page got closed, open a fresh one
         if self._page is None or self._page.is_closed():
-            self._page = await self._context.new_page()
+            try:
+                self._page = await self._context.new_page()
+            except Exception as e:
+                # The context died between _launch()'s probe and here (user
+                # closed the window mid-call). Rebuild once rather than
+                # surfacing a raw Playwright error to the user.
+                print(f"[Browser] new_page failed ({e}) — rebuilding context.")
+                self._context = None
+                self._page = None
+                await self._launch()
+                self._page = await self._context.new_page()
             await asyncio.sleep(0.2)
         return self._page
 

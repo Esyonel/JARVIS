@@ -8,6 +8,30 @@ from pathlib import Path
 
 from config import is_windows, is_mac, is_linux
 
+def _looks_like_flight_results(text: str) -> bool:
+    """True only if the page actually shows flight data.
+
+    A client-side site returns its nav bar long before its results, and that
+    nav text parses cleanly to "no flights" — indistinguishable from a real
+    empty result unless the content itself is checked. Flight listings always
+    carry clock times, so that's the signal used.
+    """
+    if not text or len(text.strip()) < 200:
+        return False
+    times = re.findall(r"\b([01]?\d|2[0-3]):[0-5]\d\b", text)
+    if len(times) < 2:
+        return False
+    money = re.search(r"(₸|KZT|USD|EUR|TL|\$|€|тенге)", text, re.IGNORECASE)
+    return bool(money)
+
+
+class FlightLookupError(RuntimeError):
+    """The search could not be completed — distinct from completing it and
+    finding nothing. Keeping these separate is the whole point: reporting a
+    failed lookup as "no flights exist" tells the user something false about
+    the world, which is worse than admitting the tool broke."""
+
+
 def _get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
@@ -115,14 +139,46 @@ def _build_google_flights_url(
     else:
         trip = f"Flights+from+{origin}+to+{destination}+on+{date}"
 
+    # NOTE: there used to be a hardcoded `tfs=CBwQAhoeEgoyMDI1LTAzLTE1...` here.
+    # That blob is a serialised search and decodes to literally "2025-03-15",
+    # "IST", "LHR" — and Google honours tfs OVER q, so EVERY search silently
+    # became Istanbul→London on a 2025 date regardless of what was asked, then
+    # reported "date is in the past". Omitting tfs lets q= actually apply.
     return (
         f"{base}"
         f"?q={trip}"
-        f"&tfs=CBwQAhoeEgoyMDI1LTAzLTE1agcIARIDSVNUcgcIARIDTEhS"   
         f"&curr=USD"
         f"&cabin={cabin_code}"
         f"&adults={passengers}"
     )
+
+
+def _build_freedom_travel_url(origin: str, destination: str, date: str,
+                              passengers: int = 1) -> str:
+    """Preferred source for Kazakhstan routes, per the owner's instruction to
+    always search flights through freedom-travel.kz.
+
+    URL shape taken from a real search the owner supplied:
+        /aviax/search/AKX-ISTSAW202608261000E
+        └ origin ┘ └city┘└apt┘└ YYYYMMDD ┘└pax┘
+    The city/airport pair is only known for the destinations mapped below; for
+    anything else this returns the site's own search page rather than guessing
+    a code and producing a wrong-route result — the exact failure just fixed above.
+    """
+    ymd = date.replace("-", "")
+    dest = destination.upper()
+    city_airport = _FREEDOM_DEST_CODES.get(dest)
+    if not city_airport:
+        return "https://freedom-travel.kz/"
+    return (f"https://freedom-travel.kz/aviax/search/"
+            f"{origin.upper()}-{city_airport}{ymd}{passengers}000E")
+
+
+# Destination airports whose freedom-travel city+airport pairing is confirmed.
+_FREEDOM_DEST_CODES = {
+    "SAW": "ISTSAW",   # Istanbul / Sabiha Gökçen
+    "IST": "ISTIST",   # Istanbul / Istanbul Airport
+}
 
 
 
@@ -137,16 +193,45 @@ def _search_flights_browser(
     import time
     from actions.browser_control import browser_control
 
+    # freedom-travel.kz first — the owner asked for every flight search to go
+    # through it. Google Flights stays as the fallback for routes whose
+    # freedom-travel codes aren't known, rather than dropping the search.
+    freedom_url = _build_freedom_travel_url(origin, destination, date, passengers)
+    if "/aviax/search/" in freedom_url:
+        print(f"[FlightFinder] 🌐 freedom-travel.kz: {freedom_url}")
+        nav = str(browser_control({"action": "go_to", "url": freedom_url}) or "")
+        if "error" not in nav.lower() and "hata" not in nav.lower():
+            # Results render client-side, so poll instead of guessing one sleep:
+            # grabbing the page too early returns only the nav bar, which then
+            # parses to "no flights" — a false answer dressed as a real one.
+            for _ in range(6):
+                time.sleep(4)
+                raw = str(browser_control({"action": "get_text"}) or "")
+                if _looks_like_flight_results(raw):
+                    return raw, freedom_url
+        print("[FlightFinder] freedom-travel.kz sonuçları yüklenmedi — Google Flights'a düşülüyor.")
+
     url = _build_google_flights_url(
         origin, destination, date, return_date, passengers, cabin
     )
 
     print(f"[FlightFinder] 🌐 Opening: {url}")
-    browser_control({"action": "go_to", "url": url})
+    nav = str(browser_control({"action": "go_to", "url": url}) or "")
+
+    # A failed navigation must not fall through as "no flights" — that reports a
+    # fact about the world ("there are none") when the truth is we never looked.
+    if "error" in nav.lower() or "hata" in nav.lower():
+        raise FlightLookupError(f"tarayıcı sayfayı açamadı: {nav.strip()[:160]}")
+
     time.sleep(5)
 
-    raw = browser_control({"action": "get_text"})
-    return (raw or ""), url
+    raw = str(browser_control({"action": "get_text"}) or "")
+    if not _looks_like_flight_results(raw):
+        raise FlightLookupError(
+            "sayfa açıldı ama uçuş sonuçları yüklenmedi (sadece menü/başlık okundu)"
+        )
+
+    return raw, url
 
 def _parse_flights_with_gemini(
     raw_text:    str,
@@ -154,11 +239,9 @@ def _parse_flights_with_gemini(
     destination: str,
     date:        str,
 ) -> list[dict]:
-    from google import genai as _genai
-    from google.genai import types
-
-    _client = _genai.Client(api_key=_get_api_key())
-    prompt  = (
+    prompt = (
+        "You are a flight data extraction expert. Extract flight information "
+        "from raw webpage text. Return ONLY valid JSON — no markdown, no explanation.\n\n"
         f"Extract flight options from {origin} to {destination} on {date} "
         f"from this Google Flights page text:\n\n{raw_text[:12000]}\n\n"
         f"Return a JSON array of up to 5 flights:\n"
@@ -168,23 +251,21 @@ def _parse_flights_with_gemini(
     )
 
     try:
-        response = _client.models.generate_content(
-            model="gemini-flash-latest",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=(
-                    "You are a flight data extraction expert. "
-                    "Extract flight information from raw webpage text. "
-                    "Return ONLY valid JSON — no markdown, no explanation."
-                )
-            ),
-        )
-        text     = re.sub(r"```(?:json)?", "", response.text).strip().rstrip("`").strip()
+        # Via core.ai_text so a Gemini 503/quota outage falls over to the other
+        # configured providers instead of failing a lookup whose page already
+        # loaded fine — the extraction is plain text work, not Gemini-specific.
+        from core.ai_text import generate
+        text = re.sub(r"```(?:json)?", "", generate(prompt)).strip().rstrip("`").strip()
         flights  = json.loads(text)
-        return flights if isinstance(flights, list) else []
+        if not isinstance(flights, list):
+            raise ValueError(f"beklenmeyen yanıt biçimi: {type(flights).__name__}")
+        return flights
     except Exception as e:
+        # Deliberately re-raised rather than returning []: an extraction failure
+        # is not the same claim as "this route has no flights", and collapsing
+        # the two is what made JARVIS state a confident falsehood.
         print(f"[FlightFinder] ⚠️ Gemini parse failed: {e}")
-        return []
+        raise FlightLookupError(f"sonuçlar okunamadı: {str(e)[:140]}") from e
 
 def _format_spoken(
     flights:     list[dict],
@@ -359,6 +440,16 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
 
         return result
 
+    except FlightLookupError as e:
+        # The lookup never completed. Say exactly that — do NOT let this be
+        # phrased as "there are no flights on that date", which is a claim
+        # about reality that was never actually checked.
+        print(f"[FlightFinder] ❌ lookup failed: {e}")
+        return (
+            f"Efendim, {origin} → {destination} {date} uçuşlarını KONTROL EDEMEDİM "
+            f"({e}). Bu 'uçuş yok' demek değil — arama tamamlanamadı. "
+            f"Kontrol etmek için: {_build_google_flights_url(origin, destination, date, return_date, passengers, cabin)}"
+        )
     except Exception as e:
         print(f"[FlightFinder] ❌ {e}")
         return f"Flight search failed, sir: {e}"
