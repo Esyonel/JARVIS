@@ -80,6 +80,9 @@ def _fetch_briefing_news() -> str:
     return _fetch_news_sync("Türkiye'den bugünkü önemli haberler")
 
 
+# Set once JarvisLive builds its registry; read by plugins/orchestrator.py.
+_ACTIVE_PLUGIN_REGISTRY = None
+
 _TR_NEWSPAPERS_BLOCK = (
     "Türkiye gazeteleri — ana sayfalar:\n"
     "Hürriyet: https://www.hurriyet.com.tr\n"
@@ -604,6 +607,12 @@ class JarvisLive:
         )
         self.ui.get_plugins = self._plugin_registry.list_for_ui
         self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
+
+        # Exposed so the orchestrator plugin can dispatch to sibling plugins
+        # through the SAME registry (respecting enable/disable state) instead
+        # of re-scanning the plugins directory into a second, divergent copy.
+        global _ACTIVE_PLUGIN_REGISTRY
+        _ACTIVE_PLUGIN_REGISTRY = self._plugin_registry
 
     def plugin_say(self, instruction: str) -> None:
         """
