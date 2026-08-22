@@ -62,7 +62,10 @@ _FORBIDDEN_PATHS = {
 _FORBIDDEN_PREFIXES = (".git/", ".venv/", "__pycache__/")
 
 
-def run(parameters: dict, player=None, session_memory=None) -> str:
+def run(parameters: dict, player=None, session_memory=None, autonomous: bool = False) -> str:
+    """autonomous=True is used by the unattended daily evolution run: with no
+    human watching, changes are restricted to NEW files under plugins/ so an
+    unsupervised bad edit can't touch main.py/ui.py/core and break startup."""
     feature = (parameters.get("feature_request") or "").strip()
     if not feature:
         msg = "Sir, I need a description of what to add or change."
@@ -80,6 +83,13 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         plan = _ask_gemini_for_edit(feature)
     except Exception as e:
         msg = f"Sir, I couldn't draft a change for that: {e}"
+        _log(msg, player)
+        return msg
+
+    if autonomous and (plan.get("mode") != "new_file"
+                       or not str(plan.get("file", "")).replace("\\", "/").startswith("plugins/")):
+        msg = ("Sir, an unattended run may only add new plugin files, and this change "
+               "wanted to touch core code — skipped, nothing was modified.")
         _log(msg, player)
         return msg
 
