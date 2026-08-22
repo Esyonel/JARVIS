@@ -53,13 +53,7 @@ def existing_capabilities() -> list[str]:
 
 
 def propose_new_capability(existing: list[str]) -> str:
-    from config import get_config
-    from google import genai
-
-    key = get_config().get("gemini_api_key")
-    if not key:
-        raise RuntimeError("no Gemini API key configured")
-    client = genai.Client(api_key=key)
+    from core.ai_text import generate
 
     listing = "\n".join(f"- {c}" for c in existing)
     prompt = (
@@ -75,8 +69,7 @@ def propose_new_capability(existing: list[str]) -> str:
         "Reply with ONE sentence in Turkish describing the feature to build. "
         "No preamble, no markdown, just the sentence."
     )
-    from plugins.self_improve import gemini_with_retry
-    return gemini_with_retry(client, prompt).strip('"')
+    return generate(prompt).strip('"')
 
 
 def main() -> int:

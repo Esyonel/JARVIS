@@ -171,14 +171,6 @@ def _git_revert(checkpoint_sha: str) -> None:
 # ── Drafting the change ──────────────────────────────────────────────────────
 
 def _ask_gemini_for_edit(feature: str) -> dict:
-    from config import get_config
-    key = get_config().get("gemini_api_key")
-    if not key:
-        raise RuntimeError("no Gemini API key configured")
-
-    from google import genai
-    client = genai.Client(api_key=key)
-
     file_list = "\n".join(
         str(p.relative_to(BASE_DIR)).replace("\\", "/")
         for p in BASE_DIR.rglob("*.py")
@@ -219,28 +211,20 @@ For editing an existing file (prefer this when changing existing behavior):
 old_string must be copied EXACTLY as it appears in the file, including
 whitespace. Keep the change minimal and focused on the request."""
 
-    text = gemini_with_retry(client, prompt)
+    text = gemini_with_retry(None, prompt)
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     return json.loads(text)
 
 
 def gemini_with_retry(client, prompt: str, model: str = "gemini-flash-latest",
                       attempts: int = 4) -> str:
-    """Gemini returns transient 503 (overloaded) / 429 (rate limit) fairly often;
-    a single one shouldn't abandon the whole request. Shared by the unattended
-    daily evolution run, which hits the same failures."""
-    for attempt in range(attempts):
-        try:
-            resp = client.models.generate_content(model=model, contents=prompt)
-            return (resp.text or "").strip()
-        except Exception as e:
-            transient = any(k in str(e) for k in ("503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED"))
-            if not transient or attempt == attempts - 1:
-                raise
-            wait = 2 ** attempt  # 1s, 2s, 4s
-            print(f"[SelfImprove] Gemini busy ({type(e).__name__}), retrying in {wait}s...")
-            time.sleep(wait)
-    raise RuntimeError("unreachable")
+    """Kept as the shared entry point (daily_evolution imports this), but the
+    work now goes through core.ai_text.generate, which retries transient errors
+    AND fails over to Groq/Cerebras/OpenRouter when Gemini's daily free quota
+    (only ~20 calls) runs out. The `client` argument is ignored — providers are
+    resolved from config each call so adding a key takes effect immediately."""
+    from core.ai_text import generate
+    return generate(prompt)
 
 
 def _validate_plan(plan: dict) -> tuple[bool, str]:
