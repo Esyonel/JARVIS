@@ -83,10 +83,10 @@ def generate(prompt: str, model: str | None = None) -> str:
         except Exception as e:
             failures.append(f"{key_name.replace('_api_key', '')}: {str(e)[:120]}")
 
-    gemini_key = cfg.get("gemini_api_key")
-    if gemini_key:
+    from core.gemini_keys import call_with_rotation, all_keys
+    if all_keys():
         try:
-            return _gemini(gemini_key, prompt, model or "gemini-flash-latest")
+            return call_with_rotation(_gemini, prompt, model or "gemini-flash-latest")
         except Exception as e:
             failures.append(f"gemini: {str(e)[:120]}")
 

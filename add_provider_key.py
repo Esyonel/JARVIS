@@ -46,6 +46,27 @@ def main() -> None:
         print(f"config/api_keys.json okunamadi: {e}")
         return
 
+    if key_name == "gemini_api_key":
+        # Voice runs on Gemini only and each free key has a small daily quota,
+        # so extra Gemini keys are APPENDED to a rotating pool rather than
+        # overwriting the previous one — see core/gemini_keys.py.
+        pool = config.get("gemini_api_keys")
+        pool = pool if isinstance(pool, list) else []
+        existing = {config.get("gemini_api_key")} | set(pool)
+        if value in existing:
+            print("\nBu anahtar zaten kayitli, degisiklik yapilmadi.")
+            return
+        if not config.get("gemini_api_key"):
+            config["gemini_api_key"] = value
+        else:
+            pool.append(value)
+            config["gemini_api_keys"] = pool
+        total = 1 + len(config.get("gemini_api_keys", []))
+        CONFIG_PATH.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"\nTamam — Gemini anahtar havuzunda artik {total} anahtar var.")
+        print("Biri gunluk kotasini doldurdugunda otomatik olarak digerine gecilecek.")
+        return
+
     config[key_name] = value
     CONFIG_PATH.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
 

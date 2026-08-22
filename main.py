@@ -98,6 +98,16 @@ RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE          = 1024
 
 def _get_api_key() -> str:
+    """First Gemini key that hasn't hit its quota today.
+
+    The live voice session is Gemini-only and each free key allows just a
+    handful of calls per day, so several keys can be configured and the spent
+    ones are skipped — see core/gemini_keys.py.
+    """
+    from core.gemini_keys import available_keys
+    keys = available_keys()
+    if keys:
+        return keys[0]
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)["gemini_api_key"]
 
@@ -1617,6 +1627,22 @@ class JarvisLive:
                     self._enhanced_live = False
                     self.ui.write_log(
                         "SYS: Advanced audio features unavailable — reconnecting without them."
+                    )
+                    continue
+
+                # Quota exhausted on the current key — retire it for today and
+                # reconnect on the next configured key rather than sitting here
+                # retrying a key that cannot work again until Google's reset.
+                from core.gemini_keys import (available_keys, is_exhausted,
+                                              mark_exhausted)
+                if is_exhausted(err_str):
+                    spent = available_keys()
+                    if spent:
+                        mark_exhausted(spent[0])
+                    remaining = len(available_keys())
+                    self.ui.write_log(
+                        f"SYS: Gemini anahtarının günlük kotası doldu — "
+                        f"{remaining} anahtar kaldı, sıradakiyle bağlanılıyor."
                     )
                     continue
 

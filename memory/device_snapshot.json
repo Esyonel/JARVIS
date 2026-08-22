@@ -1,0 +1,39 @@
+{
+  "yazici": [
+    "OneNote (Desktop)",
+    "Microsoft Print to PDF",
+    "iR C3125(2)",
+    "CanonMF460_Series_UFR_II (varsayilan)",
+    "Canon MF460 Series (fd:75:ab)",
+    "Adobe PDF"
+  ],
+  "ekran": [
+    "LS27F32xG"
+  ],
+  "bluetooth": [
+    "Lenovo Yoga Bluetooth Silent Mouse",
+    "есйонел_13",
+    "MediaTek Bluetooth Adapter",
+    "soundcore Liberty 4 NC"
+  ],
+  "ses": [
+    "Hoparlör (Realtek(R) Audio)",
+    "Kulaklıklar (2- soundcore Liberty 4 NC)",
+    "Mikrofon Dizisi (Realtek(R) Audio)",
+    "есйонел_13 A2DP SNK",
+    "Kulaklık (2- soundcore Liberty 4 NC)",
+    "NVIDIA High Definition Audio",
+    "soundcore Liberty 4 NC",
+    "soundcore Liberty 4 NC Hands-Free",
+    "Realtek(R) Audio",
+    "Kulaklık (soundcore Liberty 4 NC Hands-Free)",
+    "есйонел_13 Hands-Free HF Audio"
+  ],
+  "usb": [
+    "Bluetooth bağlantısı üzerinden Standart Seri (COM5)",
+    "Canon MF460 Series UFR II",
+    "Bluetooth bağlantısı üzerinden Standart Seri (COM6)",
+    "Redmi Note 13 Pro 5G",
+    "INTEL SSDPEKNU512GZ"
+  ]
+}
