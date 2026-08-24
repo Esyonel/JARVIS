@@ -577,6 +577,75 @@ TOOL_DECLARATIONS = [
             "required": ["category", "key", "value"]
         }
     },
+    {
+        "name": "nvidia_integrate_api",
+        "description": (
+            "Query advanced AI models via NVIDIA's Integrate API. "
+            "Use for: complex reasoning, creative writing, code analysis, research tasks, "
+            "and any question requiring high-quality AI responses from models like Minimax, Claude, or GPT. "
+            "Supports multiple models and adjustable temperature/top_p for creative vs. precise responses."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "prompt": {
+                    "type": "STRING",
+                    "description": "The question or instruction to send to the AI model"
+                },
+                "model": {
+                    "type": "STRING",
+                    "description": "Model identifier (default: minimaxai/minimax-m3). Other options: meta/llama-3.1-405b-instruct, mistralai/mixtral-8x22b-instruct-v0.1"
+                },
+                "temperature": {
+                    "type": "NUMBER",
+                    "description": "Sampling temperature 0-2: 0=deterministic, 1=balanced, 2=creative (default: 1)"
+                },
+                "top_p": {
+                    "type": "NUMBER",
+                    "description": "Top-p sampling 0-1: controls diversity (default: 0.95)"
+                },
+                "max_tokens": {
+                    "type": "INTEGER",
+                    "description": "Maximum output tokens (default: 8192)"
+                }
+            },
+            "required": ["prompt"]
+        }
+    },
+    {
+        "name": "nvidia_vision_api",
+        "description": (
+            "Analyze images using NVIDIA's advanced vision models with extended thinking. "
+            "Use for: image analysis, object detection, scene understanding, visual question answering, "
+            "detailed image descriptions, and complex image interpretation tasks."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "image_url": {
+                    "type": "STRING",
+                    "description": "URL of the image to analyze (e.g., https://example.com/image.jpg)"
+                },
+                "question": {
+                    "type": "STRING",
+                    "description": "Question or instruction about the image (e.g., 'What is in this image?', 'Analyze this')"
+                },
+                "model": {
+                    "type": "STRING",
+                    "description": "Vision model (default: google/gemma-4-31b-it)"
+                },
+                "enable_thinking": {
+                    "type": "BOOLEAN",
+                    "description": "Enable extended thinking for detailed analysis (default: true)"
+                },
+                "max_tokens": {
+                    "type": "INTEGER",
+                    "description": "Maximum output tokens (default: 16384)"
+                }
+            },
+            "required": ["image_url", "question"]
+        }
+    },
 ]
 
 class JarvisLive:

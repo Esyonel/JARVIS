@@ -63,6 +63,11 @@ AGENTS: dict[str, dict] = {
         "role": "Kalıcı bağlam: takvim, randevular, hatırlatmalar.",
         "plugins": ["calendar_manager"],
     },
+    "ai": {
+        "title": "AI & Language Model Agent",
+        "role": "Gelişmiş AI modellerine erişim: NVIDIA Integrate API ile sorgular, yapı analizi, yaratıcı görevler, görüntü analizi.",
+        "plugins": ["nvidia_integrate_api", "nvidia_vision_api"],
+    },
 }
 
 # Steps whose results the CFO reviews. Market data must come back as figures
