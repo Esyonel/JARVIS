@@ -1,8 +1,8 @@
 {
   "date": "2026-08-24",
   "counts": {
-    "gemini-1": 27,
-    "groq": 14,
+    "gemini-1": 39,
+    "groq": 17,
     "nvidia-1": 1,
     "nvidia-2": 1
   }

@@ -24,7 +24,12 @@ _lock = threading.Lock()
 # Bilinen ücretsiz kademe günlük limitleri. Kesin değerler sağlayıcı ve plana
 # göre değişir; yüzde bir tahmindir, faturalandırma verisi değildir.
 DAILY_LIMITS = {
-    "gemini": 20,        # generate_content, ücretsiz kademe
+    # Was 20 — gemini-1 hit 39 successful live-session calls today with no
+    # real quota error from Google, so 20 was just wrong and showed a
+    # misleading "0% left, exhausted" on a key that was still working fine.
+    # Rotation itself never used this number (it only reacts to a real 429),
+    # only the UI display did — raised so the display stops lying.
+    "gemini": 100,       # generate_content, ücretsiz kademe
     "gemini_live": 20,   # canlı ses oturumu ayrı sayılır
     "groq": 1000,
     "cerebras": 1000,

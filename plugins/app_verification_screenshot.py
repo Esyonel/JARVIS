@@ -1,6 +1,12 @@
 import pyautogui
 import pytesseract
+from pathlib import Path
 from typing import Any
+
+# Tesseract isn't on PATH on this machine; point pytesseract at the known install.
+_TESSERACT_EXE = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+if _TESSERACT_EXE.exists():
+    pytesseract.pytesseract.tesseract_cmd = str(_TESSERACT_EXE)
 
 # Plugin metadata
 PLUGIN = {

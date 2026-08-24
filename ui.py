@@ -5,6 +5,7 @@ import math
 import os
 import platform
 import random
+import re
 import subprocess
 import sys
 import threading
@@ -738,16 +739,32 @@ class LogWidget(QTextEdit):
             self.ensureCursorVisible()
             QTimer.singleShot(20, self._next)
 
+_PCT_RE = re.compile(r"\(([+-])(\d+(?:[.,]\d+)?)%\)")
+
+
+def _colorize_ticker_item(item: str) -> str:
+    """Prefixes a ▲/▼ arrow onto items that carry a (+X.XX%)/(-X.XX%) tag —
+    price/index/crypto entries — and leaves plain text (news headlines) as-is."""
+    m = _PCT_RE.search(item)
+    if not m:
+        return item
+    arrow = "▲" if m.group(1) == "+" else "▼"
+    return f"{arrow} {item}"
+
+
 class TickerBar(QWidget):
     """Single-line horizontally scrolling marquee — used for the BIST, world
-    markets, and news ticker strips at the bottom of the window."""
+    markets, and news ticker strips at the bottom of the window. Price/index
+    items carrying a (+X.XX%)/(-X.XX%) tag are colored green/red like a
+    real market ticker; plain items (news headlines) use the base color."""
 
     def __init__(self, label: str, color: str, bg: str, font_size: int = 10, speed: int = 2, parent=None):
         super().__init__(parent)
         self._label = label
         self._color = color
         self._font = QFont("Courier New", font_size, QFont.Weight.Bold)
-        self._text = ""
+        self._segments: list[tuple[str, str]] = []   # (text, hex color)
+        self._total_width = 0
         self._offset = 0
         self._speed = speed
         self.setFixedHeight(font_size + 16)
@@ -758,18 +775,26 @@ class TickerBar(QWidget):
 
     def set_items(self, items: list[str]) -> None:
         sep = "     •     "
-        joined = sep.join(items) if items else "veri bekleniyor..."
-        self._text = joined + sep
+        items = [_colorize_ticker_item(i) for i in items] if items else ["veri bekleniyor..."]
+
+        segments: list[tuple[str, str]] = []
+        for i, item in enumerate(items):
+            m = _PCT_RE.search(item)
+            color = C.GREEN if (m and m.group(1) == "+") else C.RED if m else C.TEXT
+            segments.append((item, color))
+            segments.append((sep, C.TEXT_DIM))
+
+        fm = QFontMetrics(self._font)
+        self._segments = segments
+        self._total_width = sum(fm.horizontalAdvance(text) for text, _ in segments)
         self._offset = self.width()
         self.update()
 
     def _tick(self) -> None:
-        if not self._text:
+        if not self._segments:
             return
         self._offset -= self._speed
-        fm = QFontMetrics(self._font)
-        text_width = fm.horizontalAdvance(self._text)
-        if self._offset < -text_width:
+        if self._offset < -self._total_width:
             self._offset = self.width()
         self.update()
 
@@ -786,11 +811,17 @@ class TickerBar(QWidget):
             painter.drawText(6, y, self._label)
             label_w = fm.horizontalAdvance(self._label) + 14
 
-        painter.setPen(qcol(C.TEXT))
-        text = self._text or ""
-        text_width = fm.horizontalAdvance(text)
-        painter.drawText(label_w + self._offset, y, text)
-        painter.drawText(label_w + self._offset + text_width, y, text)
+        if not self._segments or self._total_width <= 0:
+            return
+
+        for start in (self._offset, self._offset + self._total_width):
+            x = label_w + start
+            for text, color in self._segments:
+                w = fm.horizontalAdvance(text)
+                if x + w >= 0 and x <= self.width():
+                    painter.setPen(qcol(color))
+                    painter.drawText(x, y, text)
+                x += w
 
 
 _FILE_ICONS = {
@@ -2095,6 +2126,16 @@ class MainWindow(QMainWindow):
         sc_full.activated.connect(self._toggle_fullscreen)
         sc_intr = QShortcut(QKeySequence("Escape"), self)
         sc_intr.activated.connect(self._do_interrupt)
+
+    def closeEvent(self, event):
+        """Window close (X button, Alt+F4, taskbar close) must fully kill the
+        process — the live session's asyncio loop, mic stream, and dashboard
+        server run in background threads that don't stop just because the
+        window disappears. A half-closed JARVIS keeps holding the single-
+        instance lock and the next launch fails with 'already running'."""
+        event.accept()
+        import os
+        os._exit(0)
 
     def _show_camera_frame(self, img_bytes: bytes):
         """Slot — display camera preview overlay (main thread)."""
@@ -3610,6 +3651,9 @@ class JarvisUI:
         self._win.setWindowIcon(self._app.windowIcon())
         self._win.show()
         self.root = _RootShim(self._app)
+        # Belt-and-suspenders: any quit path that bypasses MainWindow.closeEvent
+        # (e.g. Qt's own quitOnLastWindowClosed) still hard-kills the process.
+        self._app.aboutToQuit.connect(lambda: __import__("os")._exit(0))
 
     @property
     def muted(self) -> bool:

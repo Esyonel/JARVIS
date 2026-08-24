@@ -1816,7 +1816,15 @@ def main():
         except KeyboardInterrupt:
             print("\n🔴 Shutting down...")
 
+    def memory_palace_bootstrap():
+        from core.memory_palace import run_first_boot_bootstrap, watch_for_usb_drives, _cbm_binary
+        run_first_boot_bootstrap(log=ui.write_log)
+        binary = _cbm_binary()
+        if binary:
+            watch_for_usb_drives(binary, log=ui.write_log)   # runs for the life of the process
+
     threading.Thread(target=runner, daemon=True).start()
+    threading.Thread(target=memory_palace_bootstrap, daemon=True).start()
     ui.root.mainloop()
 
 if __name__ == "__main__":
