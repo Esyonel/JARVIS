@@ -6,3 +6,4 @@ memory/long_term.json
 jarvis.log
 uploads/
 *.log
+jarvis.lock

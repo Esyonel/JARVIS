@@ -183,9 +183,23 @@ _NON_COMMERCE_DOMAINS = {
     "facebook.com", "instagram.com", "quora.com", "pinterest.com", "linkedin.com",
 }
 
+# Editorial URL patterns (news/review/blog articles) show up for any product
+# category — a $600 mentioned in a GPU review or a car review is a quoted
+# figure, not something you can click "buy" on. Path-based, not domain-based,
+# so it generalizes across topics instead of hardcoding one industry's sites.
+_EDITORIAL_PATH_HINTS = ("/review", "/news/", "/article/", "/blog/", "/haberler/", "/yorum/")
+
 
 def _domain(url: str) -> str:
     return urlparse(url).netloc.replace("www.", "").lower()
+
+
+def _looks_commercial(url: str) -> bool:
+    domain = _domain(url)
+    if not domain or domain in _NON_COMMERCE_DOMAINS:
+        return False
+    path = urlparse(url).path.lower()
+    return not any(hint in path for hint in _EDITORIAL_PATH_HINTS)
 
 
 def _dedupe_by_domain(results: list[dict]) -> list[dict]:
@@ -206,7 +220,7 @@ def _is_try(price: str) -> bool:
 def _format_price(query: str, gemini_text: str, ddg_results: list[dict]) -> tuple[str, str]:
     """Returns (spoken_summary, full_panel_text)."""
     candidates = [r for r in _dedupe_by_domain(ddg_results)
-                  if r.get("url") and _domain(r["url"]) not in _NON_COMMERCE_DOMAINS]
+                  if r.get("url") and _looks_commercial(r["url"])]
 
     priced, unpriced = [], []
     for r in candidates:

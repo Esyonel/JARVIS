@@ -70,6 +70,36 @@ def get_base_dir():
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
+LOCK_PATH       = BASE_DIR / "jarvis.lock"
+
+
+def _acquire_single_instance_lock() -> bool:
+    """Refuses a second concurrent JARVIS launch.
+
+    Repeated manual/batch launches used to pile up multiple main.py processes
+    that all fought over the mic, the same Gemini keys (burning quota N times
+    faster than real usage), and the same memory/*.json files with no
+    cross-process locking. One PID lock file fixes that: a stale lock (process
+    no longer alive, or PID reused by an unrelated program) is overwritten
+    rather than trusted.
+    """
+    import os
+    import psutil
+
+    try:
+        if LOCK_PATH.exists():
+            old_pid = int(LOCK_PATH.read_text().strip() or 0)
+            if old_pid and psutil.pid_exists(old_pid):
+                try:
+                    cmdline = " ".join(psutil.Process(old_pid).cmdline())
+                except Exception:
+                    cmdline = ""
+                if "main.py" in cmdline:
+                    return False
+        LOCK_PATH.write_text(str(os.getpid()))
+        return True
+    except Exception:
+        return True   # never block startup over a lock-file problem
 
 def _fetch_briefing_news() -> str:
     """RSS-first (no API quota, no rate limiting) with Gemini/DDG as a fallback
@@ -1790,4 +1820,18 @@ def main():
     ui.root.mainloop()
 
 if __name__ == "__main__":
+    if not _acquire_single_instance_lock():
+        print("[JARVIS] Another instance is already running — exiting.")
+        # pythonw.exe has no console — without a visible notification this
+        # exit is completely silent, and a repeated launch looks like nothing
+        # happened at all.
+        if _platform.system() == "Windows":
+            try:
+                from win10toast import ToastNotifier
+                ToastNotifier().show_toast(
+                    "JARVIS", "Zaten çalışıyor — ikinci bir kopya açılmadı.",
+                    duration=8, threaded=False)
+            except Exception:
+                pass
+        sys.exit(0)
     main()
