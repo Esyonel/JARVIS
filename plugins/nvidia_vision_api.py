@@ -151,7 +151,7 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
             message = result["choices"][0].get("message", {})
             response_text = message.get("content", "No response received.")
             # Record the API usage
-            record_api_usage("nvidia_vision")
+            record_api_usage("nvidia-2")
             return response_text
         else:
             return f"Error: Unexpected response format. {result}"

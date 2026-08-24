@@ -29,8 +29,8 @@ DAILY_LIMITS = {
     "groq": 1000,
     "cerebras": 1000,
     "openrouter": 50,
-    "nvidia_integrate": 1000,  # NVIDIA Integrate API, ücretsiz tier
-    "nvidia_vision": 500,       # NVIDIA Vision API, ücretsiz tier
+    "nvidia-1": 1000,  # NVIDIA Integrate API, ücretsiz tier
+    "nvidia-2": 500,   # NVIDIA Vision API, ücretsiz tier
 }
 
 _last_used: str = ""
@@ -101,7 +101,7 @@ def snapshot(gemini_key_count: int) -> list[dict]:
             "active": current == label,
         })
 
-    for name in ("openrouter", "groq", "cerebras", "nvidia_integrate", "nvidia_vision"):
+    for name in ("openrouter", "groq", "cerebras", "nvidia-1", "nvidia-2"):
         rows.append({
             "label": name,
             "pct": remaining_pct(name),

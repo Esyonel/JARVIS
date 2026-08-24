@@ -115,7 +115,7 @@ def run(
             message = result["choices"][0].get("message", {})
             response_text = message.get("content", "No response received.")
             # Record the API usage
-            record_api_usage("nvidia_integrate")
+            record_api_usage("nvidia-1")
             return response_text
         else:
             return f"Error: Unexpected response format. {result}"
