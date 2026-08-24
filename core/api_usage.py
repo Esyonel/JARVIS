@@ -101,7 +101,7 @@ def snapshot(gemini_key_count: int) -> list[dict]:
             "active": current == label,
         })
 
-    for name in ("openrouter", "groq", "cerebras", "nvidia_integrate"):
+    for name in ("openrouter", "groq", "cerebras", "nvidia_integrate", "nvidia_vision"):
         rows.append({
             "label": name,
             "pct": remaining_pct(name),
