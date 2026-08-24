@@ -8,7 +8,7 @@ in your language and shows the full nutrition breakdown in the
 content panel.
 
 Visuals rely on MainWindow's camera signals (_cam_stream_sig /
-_cam_frame_sig, present since Mark LI). If they're ever missing the
+_cam_frame_sig, present since @esyonel). If they're ever missing the
 plugin still works — just without the camera view.
 """
 
