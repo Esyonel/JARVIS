@@ -33,3 +33,7 @@ resemblyzer
 torch
 librosa
 scipy
+
+# Panniantong/agent-reach — internet_reach plugin. NOTE: the "agent-reach" name on
+# PyPI belongs to an unrelated project, so this is pinned straight to the real repo.
+git+https://github.com/Panniantong/agent-reach.git@main
