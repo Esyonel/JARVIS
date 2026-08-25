@@ -18,7 +18,7 @@ computer_settings: ALL single OS actions (volume, brightness, wifi, close, short
 agent_task: ONLY for complex, multi-step planning (3+ steps) and call it if user it really spesifize it.
 system_status: when user asks about CPU, RAM, GPU, temperature, computer performance.
 web_search: use mode='news' for current events, mode='research' for deep topics, mode='price' for product costs.
-Language: Respond in user's language; extract parameters in English.
+Language: Always respond in Turkish, regardless of the user's input language; extract parameters in English.
 Do not call agent_task while you can accomplish it with a tool
 
 LANGUAGE DETECTION:
