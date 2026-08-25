@@ -90,6 +90,12 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         result = f"Sir, the daily briefing failed unexpectedly: {e}"
 
     _log(result, player)
+    if result and player:
+        try:
+            title = "GAZETE BAŞLIKLARI" if wanted == "haberler" or wanted == "haber" or wanted == "gazete" else "GÜNLÜK BRİFİNG"
+            player.show_content(title, result)
+        except Exception:
+            pass
     return result or "Sir, I couldn't put together any part of the briefing right now."
 
 

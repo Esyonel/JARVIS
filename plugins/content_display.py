@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 import requests
 from bs4 import BeautifulSoup
 
@@ -66,6 +68,14 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         trimmed = content[:max_chars]
         if len(content) > max_chars:
             trimmed += "... (devamı kesildi)"
+
+        if player:
+            try:
+                domain = urlparse(url).netloc.replace("www.", "").upper() or "İÇERİK"
+                player.show_content(domain, trimmed)
+            except Exception:
+                pass
+
         return trimmed
     except requests.exceptions.RequestException as e:
         return f"Web sitesine erişilemedi: {str(e)}"

@@ -1,447 +1,271 @@
-# JARVIS Kurulum Rehberi
+# JARVIS (Just A Rather Very Intelligent System) - Kapsamlı Kurulum ve Sistem Rehberi
 
-Bu belge, bu klasördeki JARVIS uygulamasını sıfırdan kurmak, yapılandırmak ve tüm ana özellikleri çalıştırmak için hazırlanmıştır. Ana çalışma dosyası `main.py`'dir.
+Bu belge, **JARVIS** yapay zeka asistanının tüm mimarisini, bileşenlerini, eklentilerini, gereksinimlerini ve adım adım kurulum yönergelerini içermektedir.
 
-## 1. Gereksinimler
+---
 
-### Zorunlu
+## 1. Sistem Mimarisi ve Genel Bakış
 
-- Windows 10/11, macOS veya Linux
-- Python 3.11 veya 3.12
-- Mikrofon ve hoparlör
-- İnternet bağlantısı
-- Gemini API anahtarı
-- Git (günlük evrim özelliği kullanılacaksa)
+JARVIS; ses tanıma, gelişmiş dil modelleri, bilgisayarlı görü, masaüstü/sistem otomasyonu, uzaktan kumanda dashboard'u ve kendi kendini geliştirme (*self-evolution*) yeteneklerine sahip modüler bir yapay zeka asistanıdır.
 
-### Özelliğe göre gerekenler
+```mermaid
+graph TD
+    User([Kullanıcı: Ses / Arayüz / Mobil]) --> UI[PyQt6 Arayüzü & main.py]
+    User --> Remote[FastAPI Dashboard / Android Remote]
+    
+    UI --> Core[JARVIS Core Engine]
+    Remote --> Core
+    
+    subgraph Core Engine
+        STT[STT: Whisper / Vosk]
+        TTS[TTS: EdgeTTS / Kokoro / ElevenLabs]
+        VoiceID[Biyometrik Ses Kilidi: Resemblyzer]
+        LLM[Multi-LLM Client: Gemini Live / NVIDIA / Groq / Ollama]
+        Memory[Hafıza Sistemi: Memory Palace & long_term.json]
+        PluginLoader[Plugin Loader]
+    end
+    
+    Core --> Actions[Actions: Masaüstü, Tarayıcı, Medya, Dosya]
+    Core --> Plugins[70+ Eklenti: BIST, Excel, Ağ, Güvenlik, Öz-Evrim]
+    Core --> DevTools[Daily Evolution & AITMPL / MCP Entegrasyonları]
+```
 
-- Kamera: ekran/kamera görüntüsü, kalori sayacı ve şınav sayacı
-- Steam: oyun güncelleme özelliği
-- WhatsApp dışa aktarma aracı: WhatsApp arşivlerini okuma eklentisi
-- Ollama veya LM Studio: yerel metin LLM'i kullanılacaksa
-- GitHub erişimi: günlük evrim değişikliklerini otomatik göndermek için
-- Windows izinleri: ses, kamera, masaüstü kontrolü ve telefon dashboard'u
+### Proje Dizin Yapısı
 
-## 2. Projeyi hazırlama
+* **`main.py`**: Ana asistan döngüsü, canlı ses iletişimi, araç yönetimi ve olay koordinatörü.
+* **`ui.py`**: PyQt6 tabanlı modern ve animasyonlu masaüstü arayüzü.
+* **`core/`**: Çekirdek motorlar:
+  * `llm_client.py`: Çoklu LLM istemcisi (Gemini, OpenRouter, Groq, Cerebras, Ollama, LM Studio).
+  * `gemini_keys.py` & `gemini_havuz.py`: Çoklu Gemini API anahtarı havuzu ve kota rotasyonu.
+  * `stt.py` & `tts.py`: Konuşma tanıma (STT) ve ses sentezi (TTS).
+  * `voice_id.py`: Resemblyzer ile kullanıcı ses profili çıkarma ve ses kilidi.
+  * `voice_tension.py`: Ses frekans analizi ve stres tespiti.
+  * `memory_palace.py` & `api_usage.py`: Hafıza sarayı ve API kullanım/kota takibi.
+  * `plugin_loader.py` & `installer.py`: Dinamik eklenti ve bağımlılık yöneticisi.
+* **`actions/`** (23 Sistem Eylemi):
+  * `browser_control.py`: Playwright ile tarayıcı gezintisi ve web otomasyonu.
+  * `computer_control.py` & `computer_settings.py`: Windows sistem, ses, ekran, pencere kontrolü.
+  * `desktop.py` & `file_controller.py`: Masaüstü ve dosya işlemleri.
+  * `calorie_counter.py` & `pushup_counter.py`: Bilgisayarlı görü (OpenCV) ile spor ve kalori takibi.
+  * `code_helper.py` & `dev_agent.py`: Kod yazma, test ve analiz ajanları.
+  * `system_monitor.py` & `background_monitor.py`: CPU, RAM, disk, sıcaklık izleme.
+* **`plugins/`** (72+ Modüler Eklenti):
+  * Excel ve ofis otomasyonları (`excel_reader`, `excel_writer`, `document_ocr` vb.).
+  * Piyasa, döviz ve BIST takibi (`bist_market_watch`, `market_data`).
+  * NVIDIA AI & Vision API entegrasyonları.
+  * Güvenlik, gizlilik ve ağ analiz araçları (`network_scanner`, `privacy_security_manager`).
+  * WhatsApp yerel arşiv okuyucu ve Telegram bildirim eklentisi.
+  * Öz-geliştirme ve günlük evrim (`self_evolution.py`, `self_improve.py`).
+* **`dashboard/`**: FastAPI ve WebSocket tabanlı uzaktan kontrol sunucusu (`http://localhost:47291`).
+* **`android-remote/`**: Android cihazlar için uzaktan kumanda kaynak kodları.
+* **`daily_evolution.py`**: Günlük otomatik kod analizi, eklenti üretimi ve Git senkronizasyonu.
 
-PowerShell açın ve proje klasörüne geçin:
+---
+
+## 2. Sistem Gereksinimleri
+
+### Zorunlu Gereksinimler
+* **İşletim Sistemi**: Windows 10/11 (Önerilen), macOS veya Linux.
+* **Python**: Python 3.11 veya 3.12 (64-bit).
+* **Donanım**: Mikrofon, hoparlör/kulaklık.
+* **İnternet**: Gemini API ve online servisler için aktif internet bağlantısı.
+* **API Anahtarı**: En az bir adet Google Gemini API anahtarı.
+
+### İsteğe Bağlı Donanım ve Yazılımlar
+* **Kamera**: Ekran/kamera farkındalığı, kalori ve şınav sayacı için.
+* **Node.js (v18+) & NPM**: aitmpl, Claude Code Templates ve MCP sunucuları için.
+* **Git**: Günlük evrim (*Daily Evolution*) ve GitHub otomatik senkronizasyonu için.
+* **Yerel LLM (Ollama / LM Studio)**: Çevrimdışı metin zekası için.
+* **NVIDIA GPU (CUDA)**: Kokoro TTS veya yerel modellerin ultra hızlı çalışması için.
+
+---
+
+## 3. Sıfırdan Adım Adım Kurulum
+
+### Adım 1: Proje Dizinine Geçiş ve Sanal Ortam Oluşturma
+
+PowerShell'i yönetici veya kullanıcı yetkisiyle açın:
 
 ```powershell
 cd D:\nu\JARVIS
-```
 
-Yeni bir sanal ortam oluşturun:
-
-```powershell
+# Python 3.11 ile sanal ortam oluşturun
 py -3.11 -m venv .venv
-```
 
-Sanal ortamı etkinleştirin:
-
-```powershell
+# Sanal ortamı etkinleştirin
 .\.venv\Scripts\Activate.ps1
 ```
 
-PowerShell betik çalıştırma politikası engellerse yalnızca mevcut kullanıcı için şu komutu çalıştırın:
+> [!NOTE]
+> PowerShell betik çalıştırma engeli verirse şu komutu çalıştırın:
+> `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
 
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
+---
 
-Pip'i güncelleyin ve bağımlılıkları kurun:
+### Adım 2: Python Paketlerinin Yüklenmesi
+
+Pip'i güncelleyin ve `requirements.txt` dosyasındaki tüm kütüphaneleri kurun:
 
 ```powershell
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+```
+
+Web otomasyonu için Playwright Chromium tarayıcısını yükleyin:
+
+```powershell
 python -m playwright install chromium
 ```
 
-Alternatif olarak `setup.py`, bağımlılıkları ve Playwright tarayıcılarını kurar:
+---
 
-```powershell
-python setup.py
-```
+### Adım 3: API Anahtarlarının Yapılandırılması
 
-`setup.py` mevcut sanal ortamı oluşturmaz; bu nedenle önce `.venv` oluşturulmalıdır.
-
-## 3. API kodlarının bulunduğu dosya ve Gemini kurulumu
-
-JARVIS'in API kodları şu dosyada tutulur:
-
-**`config/api_keys.json`**
-
-Bu dosyada kullanılabilecek anahtar alanları:
-
-- `gemini_api_key`: Canlı sesli görüşme ve Gemini işlemleri için zorunlu
-- `openrouter_api_key`: Metin işlemleri için isteğe bağlı yedek sağlayıcı
-- `groq_api_key`: Metin işlemleri için isteğe bağlı yedek sağlayıcı
-- `cerebras_api_key`: Metin işlemleri için isteğe bağlı yedek sağlayıcı
-- `elevenlabs_api_key`: ElevenLabs TTS seçilirse gerekli
-
-Dosya yoksa `config` klasörünün içinde `api_keys.json` adıyla oluşturulmalıdır. En güvenli yöntem anahtarı yardımcı komutla eklemektir.
-
-1. Google AI Studio'dan bir anahtar oluşturun: <https://aistudio.google.com/apikey>
-2. Anahtarı güvenli şekilde yapılandırmaya ekleyin:
+JARVIS API ayarlarını `config/api_keys.json` dosyasında saklar. Güvenli anahtar eklemek için yardımcı aracı çalıştırın:
 
 ```powershell
 .\.venv\Scripts\python.exe add_provider_key.py
 ```
 
-Menüden `4) Gemini` seçin. Anahtar yazılırken terminalde görünmez.
+Menüden ilgili sağlayıcıyı seçin (örneğin **4) Gemini**).
 
-İsterseniz `config/api_keys.json` dosyasını elle de oluşturabilirsiniz:
+Alternatif olarak `config/api_keys.json` dosyasını elle düzenleyebilirsiniz:
 
 ```json
 {
-  "gemini_api_key": "GEMINI_API_KEY_BURAYA",
+  "gemini_api_key": "YOUR_GEMINI_API_KEY",
   "os_system": "windows",
   "assistant_name": "JARVIS",
-  "user_name": "",
+  "user_name": "Efendim",
+  "stt_engine": "whisper",
+  "tts_engine": "edgetts",
   "morning_brief_enabled": true,
   "plugins_enabled": {}
 }
 ```
 
-`config/api_keys.json` dosyasını GitHub'a göndermeyin. Bu dosyada gerçek anahtar varsa anahtarı iptal edip yenisini üretin; API anahtarlarını kaynak kodunda, ekran görüntüsünde veya log dosyasında paylaşmayın.
+> [!TIP]
+> **Yedek Sağlayıcılar:** İsteğe bağlı olarak `openrouter_api_key`, `groq_api_key`, `cerebras_api_key` veya `nvidia_api_key` ekleyerek Gemini kotası dolduğunda kesintisiz çalışmasını sağlayabilirsiniz.
 
-### İsteğe bağlı metin sağlayıcıları
+---
 
-Gemini kotası dolduğunda metin tabanlı işlemler için otomatik yedek sağlayıcı eklenebilir:
+### Adım 4: aitmpl ve MCP (Model Context Protocol) Kurulumu
 
-```powershell
-.\.venv\Scripts\python.exe add_provider_key.py
-```
-
-Desteklenen anahtarlar:
-
-- `openrouter_api_key`
-- `groq_api_key`
-- `cerebras_api_key`
-- `gemini_api_key`
-
-Bu yedekler yalnızca metin üretiminde kullanılır. Canlı Gemini ses oturumu için `gemini_api_key` yine gereklidir.
-
-## 4. İlk çalıştırma
-
-Sanal ortam açıkken:
+`aitmpl.com` üzerindeki araçları, ajanları ve MCP sunucularını projeye dahil etmek için:
 
 ```powershell
-python main.py
+# aitmpl / Claude Code Templates CLI kurulumu
+npm install -g claude-code-templates
+
+# Temel MCP Sunucularının Yüklenmesi
+npm install -g @modelcontextprotocol/server-filesystem @modelcontextprotocol/server-memory @modelcontextprotocol/server-brave-search @modelcontextprotocol/server-puppeteer
 ```
 
-İlk başlatmada aşağıdakiler gerçekleşebilir:
+---
 
-- Eksik Python paketleri otomatik kurulabilir.
-- Playwright Chromium tarayıcısı indirilebilir.
-- Whisper modeli ilk kullanımda indirilir. Model boyutu seçime göre yaklaşık 75-290 MB'tır.
-- Kokoro seçilirse yaklaşık 330 MB'lık ses modeli ilk kullanımda indirilir.
-- Windows'ta masaüstü, ses veya kamera izni istenebilir.
+## 4. Ses Motorları ve Biyometrik Ses Kilidi
 
-Uygulamayı kapatmak için JARVIS arayüzünü normal şekilde kapatın veya terminalde `Ctrl+C` kullanın.
-
-Windows'ta pencere göstermeden başlatmak için:
-
-```powershell
-.\start_jarvis.bat
-```
-
-## 5. Ses tanıma ve ses üretimi
-
-### Ses kilidi, isteğe bağlı
-
-JARVIS'in yalnızca kayıtlı kullanıcıyı dinlemesini istiyorsanız uygulama kapalıyken çalıştırın:
+### 1. Biyometrik Ses Profili (Ses Kilidi - İsteğe Bağlı)
+JARVIS'in sadece sizin sesinize yanıt vermesini istiyorsanız:
 
 ```powershell
 .\.venv\Scripts\python.exe enroll_voice.py
 ```
+*Mikrofona yaklaşık 8 saniye doğal konuşun. Profil `config/voice_id.npy` içine kaydedilir.*
 
-Yaklaşık 8 saniye doğal konuşun. Profil `config/voice_id.npy` içine kaydedilir. Test etmek için:
-
+Test etmek için:
 ```powershell
 .\.venv\Scripts\python.exe test_voice_id.py
 ```
 
-Ses profilini kaldırmak için `config/voice_id.npy` dosyasını silin. Mikrofonun sessiz kalması veya yanlış eşleşme durumunda kaydı yenileyin.
+### 2. Konuşma Tanıma (STT) Motorları
+* **Whisper (Varsayılan - Çevrimdışı/Hızlı):** `requirements.txt` ile otomatik hazır gelir.
+* **Vosk (Alternatif Çevrimdışı):** `pip install vosk` ve `config/api_keys.json` içine `"stt_engine": "vosk"`.
 
-### STT seçenekleri
+### 3. Ses Sentezi (TTS) Motorları
+* **Microsoft Edge TTS (Varsayılan - Çok Doğal & Ücretsiz):** İnternet gerektirir (`"tts_engine": "edgetts"`).
+* **Kokoro TTS (Tamamen Çevrimdışı & Yüksek Kalite):**
+  ```powershell
+  pip install "kokoro>=0.9" soundfile
+  ```
+  `config/api_keys.json` içine `"tts_engine": "kokoro"`.
+* **ElevenLabs (Premium Stüdyo Sesi):**
+  `config/api_keys.json` içine `"tts_engine": "elevenlabs"`, `"elevenlabs_api_key": "..."`, `"elevenlabs_voice_id": "..."`.
 
-Varsayılan motor Whisper'dır ve çevrimdışı çalışır. Alternatif olarak Vosk kullanılabilir. Seçimi `config/api_keys.json` içine ekleyin:
+---
 
-```json
-{
-  "stt_engine": "whisper"
-}
-```
+## 5. Yerel LLM Entegrasyonu (Ollama & LM Studio)
 
-Vosk için:
+İnternet olmadan veya yerel açık kaynaklı modellerle metin işlemek için:
 
+### Ollama Kurulumu
+1. [ollama.com](https://ollama.com) adresinden Ollama'yı kurun.
+2. Modeli indirin: `ollama pull llama3.2` veya `ollama pull qwen2.5-coder`.
+3. `config/api_keys.json` içine ekleyin:
+   ```json
+   {
+     "llm_provider": "ollama",
+     "llm_url": "http://localhost:11434",
+     "llm_model": "llama3.2"
+   }
+   ```
+
+---
+
+## 6. Telefon ve Mobil Uzaktan Kumanda (Dashboard)
+
+1. JARVIS'i başlatın ve arayüzdeki **REMOTE CONTROL** butonuna tıklayın.
+2. Açılan QR kodu telefonunuzun kamerası ile tarayın.
+3. Telefonunuz bilgisayarınızla aynı yerel Wi-Fi ağına bağlı olmalıdır.
+4. Sunucu `http://<BILGISAYAR_IP>:47291` adresinde çalışır.
+
+---
+
+## 7. Günlük Otomatik Evrim (Daily Evolution)
+
+JARVIS'in her gün kendi kodlarını analiz edip yeni eklentiler üretmesini ve test etmesini sağlamak için:
+
+1. Elle çalıştırma ve test:
+   ```powershell
+   .\.venv\Scripts\python.exe daily_evolution.py
+   ```
+2. Windows Görev Zamanlayıcı'ya otomatik kurma (Her sabah 09:00):
+   ```powershell
+   .\gunluk_evrim_kur.bat
+   ```
+3. Günlük logları inceleme: `evolution.log` dosyasından takip edebilirsiniz.
+
+---
+
+## 8. JARVIS'i Çalıştırma
+
+Tüm kurulumlar tamamlandıktan sonra asistanı başlatmak için:
+
+### Görsel Arayüz ile Başlatma
 ```powershell
-python -m pip install vosk
+python main.py
 ```
 
-Ardından yapılandırmada `"stt_engine": "vosk"` kullanın. Vosk modelinin ayrıca kurulup `core/stt.py` tarafından erişilebilir olması gerekir.
-
-### TTS seçenekleri
-
-Varsayılan motor internet gerektiren ücretsiz Microsoft Edge TTS'tir:
-
-```json
-{
-  "tts_engine": "edgetts"
-}
-```
-
-Çevrimdışı Kokoro:
-
+### Arka Planda / Penceresiz Başlatma
 ```powershell
-python -m pip install "kokoro>=0.9" soundfile
+.\start_jarvis.bat
 ```
 
-```json
-{
-  "tts_engine": "kokoro"
-}
-```
-
-Kokoro ilk çalıştırmada modeli indirir. CUDA destekli PyTorch varsa daha hızlı çalışır; CPU ile de kullanılabilir.
-
-ElevenLabs kullanmak için:
-
-```json
-{
-  "tts_engine": "elevenlabs",
-  "elevenlabs_api_key": "ELEVENLABS_API_KEY_BURAYA",
-  "elevenlabs_voice_id": "VOICE_ID_BURAYA"
-}
-```
-
-## 6. Yerel metin LLM'i, isteğe bağlı
-
-JARVIS'in bazı metin işlemlerini yerel modelle yapmasını istiyorsanız iki seçenek vardır.
-
-### Ollama
-
-1. <https://ollama.com> adresinden Ollama'yı kurun.
-2. Bir model indirin:
-
-```powershell
-ollama pull llama3.2
-```
-
-3. Yapılandırmaya ekleyin:
-
-```json
-{
-  "llm_provider": "ollama",
-  "llm_url": "http://localhost:11434",
-  "llm_model": "llama3.2"
-}
-```
-
-JARVIS, Ollama sunucusu çalışmıyorsa `ollama serve` komutunu başlatmayı dener.
-
-### LM Studio veya OpenAI uyumlu sunucu
-
-LM Studio, LocalAI, Jan, llama.cpp server veya vLLM kullanabilirsiniz. Sunucuyu başlatın ve modelin araç/function calling desteklediğinden emin olun:
-
-```json
-{
-  "llm_provider": "openai",
-  "llm_url": "http://localhost:1234",
-  "llm_model": "MODEL_ADI"
-}
-```
-
-## 7. Telefon dashboard'u
-
-1. JARVIS'i başlatın.
-2. Arayüzde `REMOTE CONTROL` düğmesine basın.
-3. Oluşturulan QR kodu telefonla tarayın veya gösterilen adresi açın.
-4. Telefon ve bilgisayar aynı yerel ağda olmalıdır.
-5. İlk kullanımda Windows güvenlik duvarı için UAC izni istenebilir; dashboard TCP `47291` portunu kullanır.
-
-Dashboard bağımlılıkları normal `requirements.txt` içinde bulunur. Eksikse:
-
-```powershell
-python -m pip install fastapi "uvicorn[standard]" cryptography python-multipart
-```
-
-Dashboard'u yalnızca güvenilir yerel ağlarda kullanın. QR anahtarını paylaşmayın ve kullanılmadığında dashboard'u kapatın.
-
-## 8. Tüm özelliklerin kullanım koşulları
-
-### Çekirdek özellikler
-
-- Canlı sesli sohbet: Gemini API anahtarı, mikrofon, hoparlör ve internet
-- Türkçe/çok dilli konuşma: Gemini Live ve seçilen STT/TTS motoru
-- Kalıcı hafıza: `memory/long_term.json`; bu dosyayı silmek hafızayı sıfırlar
-- Sabah brifingi ve proaktif bildirimler: internet ve etkinleştirilmiş ayarlar
-- Ekran farkındalığı: ekran yakalama izni
-- Kamera farkındalığı: çalışan kamera ve kamera izni
-- Masaüstü kontrolü: Windows'ta ek erişilebilirlik/masaüstü izinleri gerekebilir
-
-### Arama, medya ve iletişim
-
-- Web, haber, fiyat ve karşılaştırma araması: internet; Gemini araması veya DuckDuckGo yedeği
-- Hava durumu, uçuş ve piyasa verileri: internet; bazı kaynaklar API anahtarı olmadan çalışır
-- YouTube ve tarayıcı kontrolü: kurulu ve kullanılabilir bir tarayıcı
-- WhatsApp/Telegram mesajı: ilgili platformda açık oturum ve tarayıcı erişimi
-- YouTube transkriptleri: internet ve videonun erişilebilir transkripti
-
-### Dosya ve ofis
-
-- Dosya okuma/özetleme: yerel dosya erişimi ve Gemini anahtarı
-- Excel okuma/yazma/birleştirme/formül yardımcısı: `openpyxl`; Excel uygulamasının kurulu olması her işlem için zorunlu değildir
-- PowerPoint işlemleri: `python-pptx`
-- Dosya silme/taşıma: işletim sistemi izinleri; silinen dosyalar mümkün olduğunda Geri Dönüşüm Kutusu'na gönderilir
-
-### Sistem ve donanım
-
-- CPU/RAM/disk/ağ izlemesi: `psutil`
-- GPU/sıcaklık: işletim sisteminin ve donanım sürücüsünün sunduğu sensörler; her bilgisayarda tüm değerler bulunmayabilir
-- Ses seviyesi ve parlaklık: özellikle Windows'ta `pycaw`, `comtypes` ve üretici sürücüleri
-- Kamera işlemleri: `opencv-python`, çalışan kamera; kamera meşgulse diğer uygulamaları kapatın
-- Şınav sayacı: kamera, yeterli ışık ve doğru kamera açısı
-- Oyun güncelleme: Steam kurulumunun bulunması; Epic desteği kullanılan sisteme göre sınırlı olabilir
-
-### WhatsApp arşivi
-
-`plugins/whatsapp_reader.py`, WhatsApp'a doğrudan bağlanmaz; yerel dışa aktarma dosyalarını okur. Varsayılan klasör:
-
-```text
-D:\nu\whatsapp-exporter\exports
-```
-
-Kendi WhatsApp dışa aktarma aracınızın ürettiği `messages.json` dosyalarını bu yapıya yerleştirin veya eklentideki yolu kendi klasörünüze göre düzenleyin.
-
-## 9. Eklentiler
-
-JARVIS başlangıçta `plugins/` klasörünü tarar. Yeni bir eklenti eklemek için:
-
-1. `plugins/_template.py` dosyasını kopyalayın.
-2. Eklentinin `PLUGIN` tanımını ve `run()` fonksiyonunu doldurun.
-3. Dosyayı `plugins/` klasörüne koyun.
-4. JARVIS'i yeniden başlatın.
-
-Mevcut eklentiler:
-
-- Kalori sayacı
-- Günlük brifing
-- Disk kullanımı
-- Excel okuma, yazma, birleştirme ve formül yardımcısı
-- Git özeti
-- Log izleme
-- Piyasa verileri
-- Ağ taraması
-- Proje başlatıcı
-- Öz evrim ve öz geliştirme
-- Saat/tarih
-- Anlık çeviri
-- WhatsApp arşiv okuyucu
-
-Arayüzde eklentiler açılıp kapatılabilir. Ayarlar `config/api_keys.json` içindeki `plugins_enabled` alanına kaydedilir.
-
-## 10. Günlük otomatik evrim
-
-Bu özellik yeni eklenti önerir, doğrulama yapar ve başarılı değişikliği GitHub'a gönderebilir. Çalışma klasörünün Git deposu olması ve `origin` uzak deposunun yapılandırılmış olması gerekir.
-
-Önce elle test edin:
-
-```powershell
-.\.venv\Scripts\python.exe daily_evolution.py
-```
-
-Windows Görev Zamanlayıcı'ya her gün 09:00 kaydetmek için:
-
-```powershell
-.\gunluk_evrim_kur.bat
-```
-
-Görevi hemen çalıştırmak için:
-
-```powershell
-schtasks /run /tn "JARVIS Gunluk Evrim"
-```
-
-Görevi kaldırmak için:
-
-```powershell
-schtasks /delete /tn "JARVIS Gunluk Evrim" /f
-```
-
-Günlük çıktı `evolution.log` dosyasına yazılır. Betik, mevcut kaydedilmemiş Git değişiklikleri varsa çalışmayı atlar; böylece devam eden çalışmalar otomatik commit'e karışmaz.
-
-## 11. Kontrol listesi
-
-- [ ] Python 3.11/3.12 kuruldu
-- [ ] `.venv` oluşturuldu ve etkinleştirildi
-- [ ] `requirements.txt` kuruldu
-- [ ] Playwright Chromium kuruldu
-- [ ] Gemini anahtarı `config/api_keys.json` içine eklendi
-- [ ] Mikrofon ve hoparlör test edildi
-- [ ] `python main.py` ile JARVIS açıldı
-- [ ] Kamera özellikleri kullanılacaksa kamera testi yapıldı
-- [ ] Ses kilidi isteniyorsa `enroll_voice.py` çalıştırıldı
-- [ ] Telefon dashboard'u kullanılacaksa aynı ağ ve güvenlik duvarı kontrol edildi
-- [ ] Günlük evrim kullanılacaksa GitHub `origin` bağlantısı ve temiz çalışma ağacı doğrulandı
-
-## 12. Sorun giderme
-
-### `ModuleNotFoundError`
-
-Sanal ortamın açık olduğunu kontrol edin ve kurulumu tekrarlayın:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-```
-
-### Mikrofon veya kamera bulunamıyor
-
-Windows Ayarlar > Gizlilik ve güvenlik > Mikrofon/Kamera izinlerini açın. Mikrofonu veya kamerayı kullanan diğer uygulamaları kapatıp JARVIS'i yeniden başlatın.
-
-### Playwright tarayıcı hatası
-
-```powershell
-python -m playwright install chromium
-```
-
-### Ollama bağlantı hatası
-
-```powershell
-ollama serve
-ollama list
-ollama pull llama3.2
-```
-
-`llm_url`, çalışan Ollama adresiyle aynı olmalıdır.
-
-### Dashboard telefondan açılmıyor
-
-Telefon ve bilgisayarın aynı Wi-Fi ağında olduğunu kontrol edin. İlk UAC penceresini onaylayın. Windows güvenlik duvarında TCP `47291` portuna izin verilmesi gerekebilir.
-
-### Ses profili eşleşmiyor
-
-Mikrofonun sessiz olmadığını kontrol edin, gürültüyü azaltın ve `enroll_voice.py` ile profili yeniden kaydedin. Karşılaştırma puanını görmek için `test_voice_id.py` çalıştırın.
-
-### Anahtar veya kota hatası
-
-`config/api_keys.json` içindeki Gemini anahtarını kontrol edin. Gerçek anahtar sızdıysa hemen iptal edip yeni bir anahtar oluşturun. Metin işlemleri için `add_provider_key.py` ile isteğe bağlı yedek sağlayıcı eklenebilir.
-
-## 13. Güvenlik ve yedekleme
-
-- `config/api_keys.json`, `config/voice_id.npy`, `memory/long_term.json`, `evolution.log` ve kişisel dışa aktarma dosyalarını paylaşmayın.
-- API anahtarlarını Git'e eklemeyin; anahtarların geçmişe girmiş olması durumunda yalnızca dosyayı silmek yeterli değildir, anahtarları sağlayıcı panelinden döndürün.
-- `memory/long_term.json` ve `config/` klasörünü düzenli olarak yedekleyin.
-- Masaüstü kontrolü ve uzaktan dashboard'u yalnızca güvendiğiniz cihazlar ve ağlarda kullanın.
-
-## 14. Kaldırma
-
-JARVIS'i kaldırmak için önce günlük görevi silin, ardından sanal ortamı ve isteğe bağlı yerel verileri kaldırın:
-
-```powershell
-schtasks /delete /tn "JARVIS Gunluk Evrim" /f
-Remove-Item -Recurse -Force .venv
-```
-
-Kişisel ayarları ve hafızayı da silmek istiyorsanız `config/api_keys.json`, `config/voice_id.npy`, `memory/long_term.json` ve oluşmuş `uploads/` klasörünü ayrıca kaldırın.
+---
+
+## 9. Sorun Giderme ve Hızlı Çözümler
+
+| Sorun | Olası Neden | Çözüm |
+| :--- | :--- | :--- |
+| `No Python at '...'` | Sanal ortam Python yolu bozulmuş | `.venv` klasörünü silip `py -3.11 -m venv .venv` ile yeniden oluşturun. |
+| `ModuleNotFoundError` | Paketler sanal ortama yüklenmemiş | `.\.venv\Scripts\Activate.ps1` ardından `pip install -r requirements.txt` çalıştırın. |
+| `Playwright Browser Executable Not Found` | Tarayıcı ikilileri eksik | `python -m playwright install chromium` komutunu çalıştırın. |
+| Mikrofon / Kamera Algılanmıyor | Windows gizlilik izinleri kapalı | Windows Ayarları > Gizlilik ve Güvenlik > Mikrofon/Kamera izinlerini aktif edin. |
+| Dashboard Açılmıyor | Güvenlik duvarı engeli | Windows Güvenlik Duvarı'nda TCP `47291` portuna izin verin. |
+| API Kota Hatası | Gemini günlük kotası doldu | `add_provider_key.py` ile Groq / OpenRouter ekleyin veya `gemini_havuz.py` ile ek anahtar tanımlayın. |
+
+---
+
+## 10. Güvenlik Notları
+* `config/api_keys.json`, `config/voice_id.npy` ve `memory/long_term.json` dosyalarını asla genel depolarda (GitHub vb.) paylaşmayın.
+* Gerçek API anahtarlarını `.gitignore` dosyasında tutun.
