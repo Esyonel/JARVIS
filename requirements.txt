@@ -28,7 +28,11 @@ pywinauto; sys_platform == "win32"
 pywin32; sys_platform == "win32"
 qrcode[pil]
 pytesseract
+pymupdf
 openpyxl
+pandas
+python-docx
+yfinance
 webrtcvad-wheels
 resemblyzer
 torch

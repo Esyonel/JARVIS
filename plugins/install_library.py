@@ -85,7 +85,7 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=180,
+            timeout=600,
         )
     except subprocess.TimeoutExpired:
         return f"{package} kurulumu zaman aşımına uğradı."
