@@ -1,90 +1,141 @@
-# JARVIS (Just A Rather Very Intelligent System) - Kapsamlı Kurulum ve Sistem Rehberi
+# JARVIS (Just A Rather Very Intelligent System) - Kapsamlı Kurulum ve Sistem Dokümantasyonu
 
-Bu belge, **JARVIS** yapay zeka asistanının tüm mimarisini, bileşenlerini, eklentilerini, gereksinimlerini ve adım adım kurulum yönergelerini içermektedir.
+Bu belge, **JARVIS** yapay zeka asistanının tüm mimarisini, çekirdek modüllerini, 23 sistem eylemini, 72+ eklentisini, ses motorlarını, çoklu LLM altyapısını, `codebase-memory-mcp` grafik hafıza entegrasyonunu, `aitmpl.com` şablonlarını ve sıfırdan adım adım kurulum yönergelerini içermektedir.
 
 ---
 
-## 1. Sistem Mimarisi ve Genel Bakış
+## 1. Sistem Mimarisi ve Bileşenler Haritası
 
-JARVIS; ses tanıma, gelişmiş dil modelleri, bilgisayarlı görü, masaüstü/sistem otomasyonu, uzaktan kumanda dashboard'u ve kendi kendini geliştirme (*self-evolution*) yeteneklerine sahip modüler bir yapay zeka asistanıdır.
+JARVIS; canlı sesli görüşme (Gemini Live), çoklu yapay zeka sağlayıcıları, bilgisayarlı görü, masaüstü/sistem otomasyonu, uzaktan kumanda paneli, yerel veritabanı/hafıza sarayı ve kendi kendini geliştiren (*self-evolution*) modüler bir yapay zeka işletim katmanıdır.
 
 ```mermaid
 graph TD
-    User([Kullanıcı: Ses / Arayüz / Mobil]) --> UI[PyQt6 Arayüzü & main.py]
+    User([Kullanıcı: Ses / Arayüz / Mobil Dashboard]) --> UI[PyQt6 Arayüzü: ui.py & main.py]
     User --> Remote[FastAPI Dashboard / Android Remote]
     
-    UI --> Core[JARVIS Core Engine]
+    UI --> Core[JARVIS Çekirdek Motoru: core/]
     Remote --> Core
     
-    subgraph Core Engine
-        STT[STT: Whisper / Vosk]
+    subgraph Core [Çekirdek Altyapı - core/]
+        STT[STT: Whisper / Vosk + VAD]
         TTS[TTS: EdgeTTS / Kokoro / ElevenLabs]
         VoiceID[Biyometrik Ses Kilidi: Resemblyzer]
-        LLM[Multi-LLM Client: Gemini Live / NVIDIA / Groq / Ollama]
-        Memory[Hafıza Sistemi: Memory Palace & long_term.json]
-        PluginLoader[Plugin Loader]
+        VoiceTension[Ses Stres Analizi: Librosa / Scipy]
+        MultiLLM[Çoklu LLM: Gemini / NVIDIA / Groq / Ollama / OpenRouter]
+        KeyPool[Gemini Anahtar Havuzu: gemini_keys.py & gemini_havuz.py]
+        Memory[Hafıza Sarayı: memory_palace.py & long_term.json]
+        PluginLoader[Dinamik Eklenti Yükleyici: plugin_loader.py]
+        Installer[Otomatik Paket Yükleyici: installer.py]
     end
     
-    Core --> Actions[Actions: Masaüstü, Tarayıcı, Medya, Dosya]
-    Core --> Plugins[70+ Eklenti: BIST, Excel, Ağ, Güvenlik, Öz-Evrim]
-    Core --> DevTools[Daily Evolution & AITMPL / MCP Entegrasyonları]
+    Core --> Actions[Sistem Eylemleri: 23 Modül - actions/]
+    Core --> Plugins[Modüler Eklentiler: 72+ Modül - plugins/]
+    
+    subgraph MCP_Graph [Geliştirici & Hafıza Entegrasyonları]
+        CBM[Codebase Memory MCP: D:\nu\codebase-memory-mcp]
+        AITMPL[aitmpl.com / Claude Code Templates & MCPs]
+        Evolution[Günlük Otomatik Evrim: daily_evolution.py]
+    end
+    
+    Core <--> MCP_Graph
 ```
 
-### Proje Dizin Yapısı
+---
 
-* **`main.py`**: Ana asistan döngüsü, canlı ses iletişimi, araç yönetimi ve olay koordinatörü.
-* **`ui.py`**: PyQt6 tabanlı modern ve animasyonlu masaüstü arayüzü.
-* **`core/`**: Çekirdek motorlar:
-  * `llm_client.py`: Çoklu LLM istemcisi (Gemini, OpenRouter, Groq, Cerebras, Ollama, LM Studio).
-  * `gemini_keys.py` & `gemini_havuz.py`: Çoklu Gemini API anahtarı havuzu ve kota rotasyonu.
-  * `stt.py` & `tts.py`: Konuşma tanıma (STT) ve ses sentezi (TTS).
-  * `voice_id.py`: Resemblyzer ile kullanıcı ses profili çıkarma ve ses kilidi.
-  * `voice_tension.py`: Ses frekans analizi ve stres tespiti.
-  * `memory_palace.py` & `api_usage.py`: Hafıza sarayı ve API kullanım/kota takibi.
-  * `plugin_loader.py` & `installer.py`: Dinamik eklenti ve bağımlılık yöneticisi.
-* **`actions/`** (23 Sistem Eylemi):
-  * `browser_control.py`: Playwright ile tarayıcı gezintisi ve web otomasyonu.
-  * `computer_control.py` & `computer_settings.py`: Windows sistem, ses, ekran, pencere kontrolü.
-  * `desktop.py` & `file_controller.py`: Masaüstü ve dosya işlemleri.
-  * `calorie_counter.py` & `pushup_counter.py`: Bilgisayarlı görü (OpenCV) ile spor ve kalori takibi.
-  * `code_helper.py` & `dev_agent.py`: Kod yazma, test ve analiz ajanları.
-  * `system_monitor.py` & `background_monitor.py`: CPU, RAM, disk, sıcaklık izleme.
-* **`plugins/`** (72+ Modüler Eklenti):
-  * Excel ve ofis otomasyonları (`excel_reader`, `excel_writer`, `document_ocr` vb.).
-  * Piyasa, döviz ve BIST takibi (`bist_market_watch`, `market_data`).
-  * NVIDIA AI & Vision API entegrasyonları.
-  * Güvenlik, gizlilik ve ağ analiz araçları (`network_scanner`, `privacy_security_manager`).
-  * WhatsApp yerel arşiv okuyucu ve Telegram bildirim eklentisi.
-  * Öz-geliştirme ve günlük evrim (`self_evolution.py`, `self_improve.py`).
-* **`dashboard/`**: FastAPI ve WebSocket tabanlı uzaktan kontrol sunucusu (`http://localhost:47291`).
-* **`android-remote/`**: Android cihazlar için uzaktan kumanda kaynak kodları.
-* **`daily_evolution.py`**: Günlük otomatik kod analizi, eklenti üretimi ve Git senkronizasyonu.
+## 2. Dizin ve Dosya Mimarisi Detayı
+
+### A. Kök Dizin Dosyaları
+* **`main.py`**: Ana asistan döngüsü, Gemini Live WebSocket oturumu, ses kaydı, klavye kısayolları ve eylem yönlendirmesi.
+* **`ui.py`**: PyQt6 tabanlı, fütüristik ses dalgası vizüalizörü, durum göstergeleri, log konsolu ve kontrol paneli.
+* **`requirements.txt`**: Tüm Python bağımlılıklarının listesi.
+* **`setup.py`**: Bağımlılıkların ve Playwright tarayıcılarının otomatik kurulum betiği.
+* **`add_provider_key.py`**: API anahtarlarını güvenli biçimde ekleme yardımcı aracı.
+* **`enroll_voice.py` & `test_voice_id.py`**: Biyometrik ses kaydı alma ve doğrulama araçları.
+* **`daily_evolution.py`**: Kendi kendine kod analizi, yeni eklenti üretimi ve Git senkronizasyonu.
+* **`gemini_havuz.py`**: Çoklu Gemini API anahtarlarının kota kontrolü ve rotasyonu.
+* **`start_jarvis.bat` / `gunluk_evrim_kur.bat` / `gunluk_evrim_calistir.bat`**: Windows hızlı başlatma ve Görev Zamanlayıcı betikleri.
 
 ---
 
-## 2. Sistem Gereksinimleri
-
-### Zorunlu Gereksinimler
-* **İşletim Sistemi**: Windows 10/11 (Önerilen), macOS veya Linux.
-* **Python**: Python 3.11 veya 3.12 (64-bit).
-* **Donanım**: Mikrofon, hoparlör/kulaklık.
-* **İnternet**: Gemini API ve online servisler için aktif internet bağlantısı.
-* **API Anahtarı**: En az bir adet Google Gemini API anahtarı.
-
-### İsteğe Bağlı Donanım ve Yazılımlar
-* **Kamera**: Ekran/kamera farkındalığı, kalori ve şınav sayacı için.
-* **Node.js (v18+) & NPM**: aitmpl, Claude Code Templates ve MCP sunucuları için.
-* **Git**: Günlük evrim (*Daily Evolution*) ve GitHub otomatik senkronizasyonu için.
-* **Yerel LLM (Ollama / LM Studio)**: Çevrimdışı metin zekası için.
-* **NVIDIA GPU (CUDA)**: Kokoro TTS veya yerel modellerin ultra hızlı çalışması için.
+### B. Çekirdek Modüller (`core/`)
+| Modül | Görevi |
+| :--- | :--- |
+| **`llm_client.py`** | Gemini, OpenRouter, Groq, Cerebras, NVIDIA AI, Ollama ve LM Studio ile çoklu LLM istemcisi. |
+| **`gemini_keys.py`** | Gemini API anahtarları arasında yük dengeleme ve kota aşımında otomatik geçiş. |
+| **`stt.py`** | Whisper ve Vosk modelleriyle mikrofon sesini metne dönüştürme ve WebRTC VAD ses algılama. |
+| **`tts.py`** | Microsoft Edge TTS (online), Kokoro (çevrimdışı nöral ses) ve ElevenLabs ses sentezi. |
+| **`voice_id.py`** | Resemblyzer ile konuşmacı gömme vektörü (*speaker embedding*) çıkarıp yetkisiz sesleri filtreleme. |
+| **`voice_tension.py`** | Kullanıcının ses tonundaki stres ve gerilim seviyesini tespit etme. |
+| **`memory_palace.py`** | Kullanıcı tercihlerini, konuşma geçmişlerini ve bağlamı hafıza sarayında organize etme. |
+| **`plugin_loader.py`** | `plugins/` altındaki eklentileri çalışma anında dinamik olarak yükleme ve doğrulama. |
+| **`installer.py`** | Eksik Python paketlerini otomatik olarak tespit edip pip üzerinden yükleme. |
+| **`api_usage.py`** | Token ve API çağrı limitlerini gerçek zamanlı takip etme. |
+| **`agents.py`** | Alt görevleri uzman ajanlara paylaştırma motoru. |
 
 ---
 
-## 3. Sıfırdan Adım Adım Kurulum
+### C. Sistem Eylemleri (`actions/` - 23 Eylem Modülü)
+1. **`browser_control.py`**: Playwright ile tam otonom tarayıcı kontrolü, web araması, buton tıklama ve form doldurma.
+2. **`computer_control.py` & `computer_settings.py`**: Windows ses seviyesi, parlaklık, çözünürlük, pencere konumlandırma ve kilit kontrolü.
+3. **`desktop.py`**: Masaüstü simgeleri, düzenleme ve dosya yönetimi.
+4. **`dev_agent.py` & `code_helper.py`**: Kod geliştirme, test çalıştırma, hata ayıklama ve dosya refactoring.
+5. **`file_controller.py` & `file_processor.py`**: PDF, Word, Excel, PowerPoint okuma, dönüştürme ve özetleme.
+6. **`calorie_counter.py` & `pushup_counter.py`**: OpenCV ile kamera üzerinden şınav ve yemek kalori analizi.
+7. **`system_monitor.py` & `background_monitor.py`**: CPU, RAM, GPU, disk, sıcaklık ve arka plan servis izleme.
+8. **`flight_finder.py`**: Uçuş fiyatları ve sefer sorgulama.
+9. **`game_updater.py`**: Steam ve Epic Games kütüphane/güncelleme kontrolü.
+10. **`open_app.py`**: Uygulama ve program başlatma/kapatma.
+11. **`reminder.py`**: Sesli ve bildirimli hatırlatıcı sistemi.
+12. **`screen_processor.py`**: Ekran görüntüsü yakalama ve görsel modelle analiz etme.
+13. **`send_message.py`**: WhatsApp ve Telegram üzerinden mesaj iletme.
+14. **`upload_video.py` & `youtube_video.py`**: YouTube video arama, transkript çekme ve medya işlemleri.
+15. **`weather_report.py`**: Anlık ve haftalık hava durumu raporlama.
+16. **`web_search.py`**: DuckDuckGo ve Gemini destekli gerçek zamanlı arama.
+17. **`proactive.py`**: Kullanıcıya belirli aralıklarla proaktif durum bildirimleri iletme.
 
-### Adım 1: Proje Dizinine Geçiş ve Sanal Ortam Oluşturma
+---
 
-PowerShell'i yönetici veya kullanıcı yetkisiyle açın:
+### D. Modüler Eklentiler (`plugins/` - 72+ Eklenti)
+* **Ofis ve Belge Otomasyonu:** `excel_reader`, `excel_writer`, `excel_modifier`, `excel_merge_cleaner`, `excel_formula_helper`, `document_ocr`, `document_extractor`, `document_processor`.
+* **Finans ve Borsa:** `bist_market_watch`, `market_data`.
+* **NVIDIA AI ve Vision:** `nvidia_ai_api_fetcher`, `nvidia_free_endpoint`, `nvidia_integrate_api`, `nvidia_model_query`, `nvidia_vision_api`.
+* **Ağ ve Güvenlik:** `network_scanner`, `network_data_fetcher`, `privacy_security_manager`, `privacy_security_regulation`, `log_watcher`, `syncthing_status`, `device_manager`.
+* **İletişim ve Mesajlaşma:** `whatsapp_reader`, `whatsapp_backup`, `telegram_notify`, `calendar_manager`.
+* **Medya ve Donanım:** `binaural_audio`, `visual_editing`, `background_removal`, `printer_control`, `scanner_control`.
+* **Kendi Kendini Geliştirme (Self-Improvement):** `self_evolution.py`, `self_improve.py`, `self_improvement_program.py`, `trend_based_roadmap.py`, `internet_research_self_improve.py`, `codebase_intelligence.py`.
+* **Doğrulama ve Test:** `app_launch_verifier`, `app_verification`, `app_verification_ocr`, `app_verification_screenshot`, `app_website_verifier`.
+
+---
+
+### E. Uzaktan Erişim & Dashboard (`dashboard/` & `android-remote/`)
+* **FastAPI Web Server (`dashboard/server.py`):** `http://localhost:47291` portunda çalışır. WebSockets üzerinden anlık ses transferi, komut iletimi ve sistem durumunu telefona aktarır.
+* **Android Remote:** Android cihazlar için geliştirilmiş yerel kontrol uygulaması.
+
+---
+
+## 3. Sistem Gereksinimleri
+
+### Temel Gereksinimler
+* **İşletim Sistemi:** Windows 10/11 (64-bit) (Tavsiye edilen), macOS veya Linux.
+* **Python:** Python 3.11 veya 3.12 (64-bit).
+* **Donanım:** Mikrofon, hoparlör veya kulaklık.
+* **İnternet:** Gemini API ve online servisler için internet bağlantısı.
+* **API Anahtarı:** En az 1 adet Google Gemini API anahtarı.
+
+### İsteğe Bağlı Donanım & Yazılımlar
+* **Kamera:** Şınav sayacı, yemek/kalori analizi ve ekran/kamera farkındalığı için.
+* **Node.js (v18+) & NPM:** `aitmpl`, Claude Code Templates ve MCP sunucuları için.
+* **Git:** Günlük evrim (*Daily Evolution*) ve GitHub commit senkronizasyonu için.
+* **Ollama veya LM Studio:** Tamamen çevrimdışı yerel metin üretimi için.
+* **NVIDIA GPU (CUDA):** Kokoro TTS veya yerel dil modellerinin GPU hızlandırması için.
+
+---
+
+## 4. Sıfırdan Adım Adım Kurulum Rehberi
+
+### Adım 1: Proje Dizinini Açma ve Sanal Ortamı (.venv) Hazırlama
+
+PowerShell terminalini açın ve proje dizinine gidin:
 
 ```powershell
 cd D:\nu\JARVIS
@@ -102,16 +153,16 @@ py -3.11 -m venv .venv
 
 ---
 
-### Adım 2: Python Paketlerinin Yüklenmesi
+### Adım 2: Bağımlılıkları Yükleme
 
-Pip'i güncelleyin ve `requirements.txt` dosyasındaki tüm kütüphaneleri kurun:
+Pip aracını güncelleyin ve `requirements.txt` dosyasındaki paketleri kurun:
 
 ```powershell
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Web otomasyonu için Playwright Chromium tarayıcısını yükleyin:
+Web otomasyonu ve tarayıcı işlemleri için Playwright Chromium bileşenini yükleyin:
 
 ```powershell
 python -m playwright install chromium
@@ -119,17 +170,16 @@ python -m playwright install chromium
 
 ---
 
-### Adım 3: API Anahtarlarının Yapılandırılması
+### Adım 3: API Anahtarlarını Yapılandırma
 
-JARVIS API ayarlarını `config/api_keys.json` dosyasında saklar. Güvenli anahtar eklemek için yardımcı aracı çalıştırın:
+JARVIS'in anahtar dosyası **`config/api_keys.json`** dosyasında saklanır. Anahtarlarınızı interaktif ve güvenli şekilde eklemek için:
 
 ```powershell
 .\.venv\Scripts\python.exe add_provider_key.py
 ```
+*(Menüden **4) Gemini** seçeneğini kullanarak Google AI Studio anahtarınızı girin).*
 
-Menüden ilgili sağlayıcıyı seçin (örneğin **4) Gemini**).
-
-Alternatif olarak `config/api_keys.json` dosyasını elle düzenleyebilirsiniz:
+Alternatif olarak `config/api_keys.json` dosyasını doğrudan düzenleyebilirsiniz:
 
 ```json
 {
@@ -145,63 +195,88 @@ Alternatif olarak `config/api_keys.json` dosyasını elle düzenleyebilirsiniz:
 ```
 
 > [!TIP]
-> **Yedek Sağlayıcılar:** İsteğe bağlı olarak `openrouter_api_key`, `groq_api_key`, `cerebras_api_key` veya `nvidia_api_key` ekleyerek Gemini kotası dolduğunda kesintisiz çalışmasını sağlayabilirsiniz.
+> **Yedek LLM Sağlayıcıları:** Gemini kotası dolduğunda otomatik devreye girmesi için `groq_api_key`, `openrouter_api_key`, `cerebras_api_key` veya `nvidia_api_key` alanlarını ekleyebilirsiniz.
 
 ---
 
-### Adım 4: aitmpl ve MCP (Model Context Protocol) Kurulumu
+### Adım 4: Codebase Memory MCP (`D:\nu\codebase-memory-mcp`) Entegrasyonu
 
-`aitmpl.com` üzerindeki araçları, ajanları ve MCP sunucularını projeye dahil etmek için:
+JARVIS'in tüm kod tabanını bilgi grafiği (*knowledge graph*) olarak belleğinde tutması için `codebase-memory-mcp` kurulmuştur.
+
+* **Yürütülebilir Dosya:** `D:\nu\codebase-memory-mcp\codebase-memory-mcp.exe`
+* **Çalışma Alanı Yapılandırması:** [`.agents/mcp_config.json`](file:///d:/nu/JARVIS/.agents/mcp_config.json)
+* **Global Yapılandırma:** `~/.gemini/config/mcp_config.json`
+
+```json
+{
+  "mcpServers": {
+    "codebase-memory-mcp": {
+      "command": "C:/Users/Osman Aran/AppData/Local/Programs/codebase-memory-mcp/codebase-memory-mcp.exe",
+      "args": []
+    }
+  }
+}
+```
+
+**Kullanılan Temel Grafik Araçları:**
+* `search_graph`: Fonksiyon, sınıf ve değişkenleri semantik arar.
+* `trace_path`: Fonksiyon çağrı yönlerini ve bağımlılık zincirini inceler.
+* `get_code_snippet`: Doğrudan hedef sembolün kaynak kodunu çeker.
+* `get_architecture`: Proje genel mimari özetini sağlar.
+
+---
+
+### Adım 5: aitmpl.com & Ek MCP Sunucularının Kurulumu
+
+`aitmpl.com` (Claude Code Templates) ekosistemindeki hazır ajan ve araçları projeye dahil etmek için:
 
 ```powershell
-# aitmpl / Claude Code Templates CLI kurulumu
+# aitmpl CLI aracını yükleyin
 npm install -g claude-code-templates
 
-# Temel MCP Sunucularının Yüklenmesi
+# Temel MCP sunucularını yükleyin
 npm install -g @modelcontextprotocol/server-filesystem @modelcontextprotocol/server-memory @modelcontextprotocol/server-brave-search @modelcontextprotocol/server-puppeteer
 ```
 
 ---
 
-## 4. Ses Motorları ve Biyometrik Ses Kilidi
+## 5. Ses Motorları ve Biyometrik Ses Kilidi
 
-### 1. Biyometrik Ses Profili (Ses Kilidi - İsteğe Bağlı)
-JARVIS'in sadece sizin sesinize yanıt vermesini istiyorsanız:
+### 1. Biyometrik Ses Profili Tanımlama (Ses Kilidi)
+JARVIS'in yalnızca sizin sesinize tepki vermesi için mikrofona yaklaşık 8 saniye konuşarak profil oluşturun:
 
 ```powershell
 .\.venv\Scripts\python.exe enroll_voice.py
 ```
-*Mikrofona yaklaşık 8 saniye doğal konuşun. Profil `config/voice_id.npy` içine kaydedilir.*
-
-Test etmek için:
+Profil `config/voice_id.npy` dosyasına kaydedilir. Profil eşleşmesini test etmek için:
 ```powershell
 .\.venv\Scripts\python.exe test_voice_id.py
 ```
 
-### 2. Konuşma Tanıma (STT) Motorları
-* **Whisper (Varsayılan - Çevrimdışı/Hızlı):** `requirements.txt` ile otomatik hazır gelir.
-* **Vosk (Alternatif Çevrimdışı):** `pip install vosk` ve `config/api_keys.json` içine `"stt_engine": "vosk"`.
+### 2. STT (Konuşmayı Metne Çevirme)
+* **Whisper (Varsayılan):** Çevrimdışı ve yüksek doğruluklu. `config/api_keys.json` içine `"stt_engine": "whisper"`.
+* **Vosk (Düşük Kaynaklı Çevrimdışı):** `pip install vosk` ve `"stt_engine": "vosk"`.
 
-### 3. Ses Sentezi (TTS) Motorları
-* **Microsoft Edge TTS (Varsayılan - Çok Doğal & Ücretsiz):** İnternet gerektirir (`"tts_engine": "edgetts"`).
+### 3. TTS (Metni Sese Çevirme)
+* **Microsoft Edge TTS (Varsayılan):** Ücretsiz ve çok doğal Türkçe sesler (`"tts_engine": "edgetts"`).
 * **Kokoro TTS (Tamamen Çevrimdışı & Yüksek Kalite):**
   ```powershell
   pip install "kokoro>=0.9" soundfile
   ```
   `config/api_keys.json` içine `"tts_engine": "kokoro"`.
-* **ElevenLabs (Premium Stüdyo Sesi):**
+* **ElevenLabs (Stüdyo Kalitesi):**
   `config/api_keys.json` içine `"tts_engine": "elevenlabs"`, `"elevenlabs_api_key": "..."`, `"elevenlabs_voice_id": "..."`.
 
 ---
 
-## 5. Yerel LLM Entegrasyonu (Ollama & LM Studio)
+## 6. Yerel LLM Entegrasyonu (Ollama & LM Studio)
 
-İnternet olmadan veya yerel açık kaynaklı modellerle metin işlemek için:
+İnternet bağlantısı olmadan yerel modellerle çalışmak için:
 
-### Ollama Kurulumu
-1. [ollama.com](https://ollama.com) adresinden Ollama'yı kurun.
+### Ollama Kurulumu:
+1. [ollama.com](https://ollama.com) üzerinden Ollama'yı kurun.
 2. Modeli indirin: `ollama pull llama3.2` veya `ollama pull qwen2.5-coder`.
-3. `config/api_keys.json` içine ekleyin:
+3. `config/api_keys.json` dosyasına ekleyin:
    ```json
    {
      "llm_provider": "ollama",
@@ -212,60 +287,105 @@ Test etmek için:
 
 ---
 
-## 6. Telefon ve Mobil Uzaktan Kumanda (Dashboard)
+## 7. Mobil / Telefon Uzaktan Kumandası (Dashboard)
 
-1. JARVIS'i başlatın ve arayüzdeki **REMOTE CONTROL** butonuna tıklayın.
-2. Açılan QR kodu telefonunuzun kamerası ile tarayın.
-3. Telefonunuz bilgisayarınızla aynı yerel Wi-Fi ağına bağlı olmalıdır.
-4. Sunucu `http://<BILGISAYAR_IP>:47291` adresinde çalışır.
+1. JARVIS'i başlatın.
+2. Arayüzün sağ altındaki **REMOTE CONTROL** butonuna tıklayın.
+3. Ekranda beliren QR kodu telefonunuzla tarayın veya tarayıcıda `http://<BILGISAYAR_IP>:47291` adresini açın.
+4. *Telefon ve bilgisayar aynı Wi-Fi ağında olmalıdır.*
 
 ---
 
-## 7. Günlük Otomatik Evrim (Daily Evolution)
+## 8. Günlük Otomatik Evrim (Daily Evolution)
 
-JARVIS'in her gün kendi kodlarını analiz edip yeni eklentiler üretmesini ve test etmesini sağlamak için:
+JARVIS'in her gün kendi kod tabanını inceleyip eksiklikleri tespit etmesi, yeni eklentiler üretmesi ve bunları Git üzerinden doğrulaması için:
 
-1. Elle çalıştırma ve test:
+1. **Elle Test:**
    ```powershell
    .\.venv\Scripts\python.exe daily_evolution.py
    ```
-2. Windows Görev Zamanlayıcı'ya otomatik kurma (Her sabah 09:00):
+2. **Windows Görev Zamanlayıcı'ya Ekleme (Her Sabah 09:00):**
    ```powershell
    .\gunluk_evrim_kur.bat
    ```
-3. Günlük logları inceleme: `evolution.log` dosyasından takip edebilirsiniz.
+3. **Logları İnceleme:** Süreç `evolution.log` dosyasına kaydedilir.
 
 ---
 
-## 8. JARVIS'i Çalıştırma
+## 9. JARVIS'i Başlatma
 
-Tüm kurulumlar tamamlandıktan sonra asistanı başlatmak için:
+Kurulumlar tamamlandıktan sonra asistanı çalıştırmak için:
 
-### Görsel Arayüz ile Başlatma
+### Normal / Görsel Arayüz ile Başlatma:
 ```powershell
 python main.py
 ```
 
-### Arka Planda / Penceresiz Başlatma
+### Arka Planda / Sessiz Başlatma:
 ```powershell
 .\start_jarvis.bat
 ```
 
 ---
 
-## 9. Sorun Giderme ve Hızlı Çözümler
+## 10. Sık Karşılaşılan Sorunlar ve Çözümler
 
-| Sorun | Olası Neden | Çözüm |
+| Hata / Durum | Neden | Çözüm |
 | :--- | :--- | :--- |
-| `No Python at '...'` | Sanal ortam Python yolu bozulmuş | `.venv` klasörünü silip `py -3.11 -m venv .venv` ile yeniden oluşturun. |
+| `No Python at '...'` | Sanal ortam Python yolu taşınmış/bozulmuş | `.venv` klasörünü silin ve `py -3.11 -m venv .venv` ile yeniden kurun. |
 | `ModuleNotFoundError` | Paketler sanal ortama yüklenmemiş | `.\.venv\Scripts\Activate.ps1` ardından `pip install -r requirements.txt` çalıştırın. |
-| `Playwright Browser Executable Not Found` | Tarayıcı ikilileri eksik | `python -m playwright install chromium` komutunu çalıştırın. |
-| Mikrofon / Kamera Algılanmıyor | Windows gizlilik izinleri kapalı | Windows Ayarları > Gizlilik ve Güvenlik > Mikrofon/Kamera izinlerini aktif edin. |
+| `Playwright Browser not found` | Chromium ikilisi indirilmemiş | `python -m playwright install chromium` komutunu çalıştırın. |
+| Mikrofon / Kamera Algılanmıyor | Windows gizlilik izinleri kapalı | Windows Ayarları > Gizlilik > Mikrofon/Kamera izinlerini aktif edin. |
 | Dashboard Açılmıyor | Güvenlik duvarı engeli | Windows Güvenlik Duvarı'nda TCP `47291` portuna izin verin. |
-| API Kota Hatası | Gemini günlük kotası doldu | `add_provider_key.py` ile Groq / OpenRouter ekleyin veya `gemini_havuz.py` ile ek anahtar tanımlayın. |
+| Kota / 429 Hatası | Gemini günlük kotası doldu | `add_provider_key.py` ile yedek Groq / OpenRouter anahtarı tanımlayın. |
+| Ses Kilidi Yanıt Vermiyor | Ses eşiği düşük veya profil eski | `enroll_voice.py` ile yeni bir ses kaydı alın. |
 
 ---
 
-## 10. Güvenlik Notları
-* `config/api_keys.json`, `config/voice_id.npy` ve `memory/long_term.json` dosyalarını asla genel depolarda (GitHub vb.) paylaşmayın.
-* Gerçek API anahtarlarını `.gitignore` dosyasında tutun.
+## 11. Güvenlik ve Gizlilik Prensipleri
+* `config/api_keys.json`, `config/voice_id.npy`, `memory/long_term.json` ve `evolution.log` dosyalarını asla genel depolarda (GitHub) paylaşmayın.
+* Bu dosyalar varsayılan olarak `.gitignore` listesindedir.
+
+---
+
+## 12. Otonom Yüklü MCP Sunucuları ve Self-Installer Sistemi
+
+JARVIS'e harici araç entegrasyonlarını yapabilmesi ve gelecekteki bileşenleri **kendi kendine kurabilmesi** için aşağıdaki altyapı eklenmiştir:
+
+### Yüklü ve Aktif MCP Sunucuları (`.agents/mcp_config.json`):
+1. **`codebase-memory-mcp`**: Kod tabanının semantik grafik hafızası (`D:\nu\codebase-memory-mcp\codebase-memory-mcp.exe`).
+2. **`filesystem`**: Güvenli yerel dosya arama ve düzenleme sunucusu (`@modelcontextprotocol/server-filesystem`).
+3. **`memory`**: Uzun vadeli bağlamsal bilgi grafiği (`@modelcontextprotocol/server-memory`).
+4. **`puppeteer`**: Otonom web tarayıcısı ve ekran yakalayıcı (`@modelcontextprotocol/server-puppeteer`).
+5. **`brave-search`**: Gerçek zamanlı internet arama motoru (`@modelcontextprotocol/server-brave-search`).
+
+### JARVIS Otonom Kurulum Modülleri:
+* **`core/mcp_manager.py`**: MCP sunucularını, Python kütüphanelerini ve aitmpl şablonlarını arka planda otomatik kuran, `mcp_config.json` dosyasına kaydeden ve `kurulum.md` belgesini otomatik güncelleyen çekirdek yönetici.
+* **`plugins/mcp_aitmpl_installer.py`**: JARVIS'in sesli komutla veya yapay zeka aracılığıyla (`install_mcp`, `install_python`, `list_mcps`, `register_existing`) yeni araçları kendi kendine kurmasını sağlayan eklenti.
+
+---
+
+## 13. İleri Düzey Vektörel Hafıza, Bilgisayarlı Görü ve Medya Stüdyosu
+
+JARVIS'e eklenen yeni nesil yetenekler ve eklentiler:
+
+### 1. Vektörel Hafıza & Belge RAG Sistemi
+* **Kütüphaneler:** `chromadb`, `lancedb`
+* **Eklenti:** [`plugins/vector_memory_rag.py`](file:///d:/nu/JARVIS/plugins/vector_memory_rag.py)
+* **Kullanım:** Belge, kod veya notları anlamsal vektör uzayına kaydeder ve semantik aramayla en doğru bilgiyi anında geri getirir.
+
+### 2. Bilgisayarlı Görü & El Hareketi Takibi (Vision & Gestures)
+* **Kütüphaneler:** `mediapipe`, `ultralytics` (YOLOv11), `opencv-python`
+* **Eklenti:** [`plugins/gesture_control.py`](file:///d:/nu/JARVIS/plugins/gesture_control.py)
+* **Kullanım:** Kamera üzerinden el hareketlerini (el sallama, işaret etme, parmak şıklatma) algılayarak ses çıkarmadan masaüstünü ve medyayı kontrol eder.
+
+### 3. Medya, Ses ve Video İşleme Stüdyosu
+* **Kütüphaneler:** `moviepy`, `ffmpeg-python`
+* **Eklenti:** [`plugins/media_studio.py`](file:///d:/nu/JARVIS/plugins/media_studio.py)
+* **Kullanım:** Video kırpma, saniyeler içinde ses ayrıştırma, format dönüştürme ve medya optimizasyonu.
+
+### 4. Çok Kanallı Bot Köprüsü (Discord & Slack)
+* **Kütüphaneler:** `discord.py`, `slack-sdk`
+* **Kullanım:** JARVIS'in Discord ve Slack üzerinden uzaktan bildirim göndermesini ve komut almasını sağlar.
+
+

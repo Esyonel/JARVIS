@@ -33,6 +33,14 @@ from PyQt6.QtWidgets import (
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSplitter,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QProgressBar,
 )
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+from PyQt6.QtMultimediaWidgets import QVideoWidget
+
+try:
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    _WEBENGINE = True
+except ImportError:
+    _WEBENGINE = False
 
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -1931,6 +1939,8 @@ class MainWindow(QMainWindow):
     _camera_sig     = pyqtSignal(bytes)      # show camera frame preview (small overlay)
     _cam_stream_sig = pyqtSignal(bool)       # True=start live stream, False=stop
     _cam_frame_sig  = pyqtSignal(bytes)      # live camera frame → HUD area
+    _video_sig      = pyqtSignal(str)        # play a recorded video file → HUD area
+    _browser_sig    = pyqtSignal(str)        # load a URL in the embedded browser → HUD area
     _clipboard_sig  = pyqtSignal(str)        # clipboard text changed (thread-safe)
     _ticker_bist_sig  = pyqtSignal(list)     # BIST ticker items (thread-safe)
     _ticker_world_sig = pyqtSignal(list)     # world markets ticker items (thread-safe)
@@ -2027,10 +2037,84 @@ class MainWindow(QMainWindow):
         )
         _cam_v.addWidget(self._cam_live_lbl, stretch=1)
 
-        # Stack: 0 = animated HUD, 1 = live camera
+        # Recorded-video playback container — replaces HUD to show a captured clip
+        _vid_cont = QWidget()
+        _vid_cont.setStyleSheet("background: #000308;")
+        _vid_v = QVBoxLayout(_vid_cont)
+        _vid_v.setContentsMargins(0, 0, 0, 0)
+        _vid_v.setSpacing(0)
+        _vid_hdr = QHBoxLayout()
+        _vid_hdr.setContentsMargins(8, 5, 8, 5)
+        _vid_title = QLabel("◈  VİDEO KAYDI")
+        _vid_title.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        _vid_title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        _vid_hdr.addWidget(_vid_title)
+        _vid_hdr.addStretch()
+        _vid_x = QPushButton("✕  KAPAT")
+        _vid_x.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        _vid_x.setCursor(Qt.CursorShape.PointingHandCursor)
+        _vid_x.setStyleSheet(f"""
+            QPushButton {{
+                color: {C.TEXT_DIM}; background: transparent;
+                border: none; padding: 2px 6px;
+            }}
+            QPushButton:hover {{ color: {C.PRI}; }}
+        """)
+        _vid_x.clicked.connect(self._close_video)
+        _vid_hdr.addWidget(_vid_x)
+        _vid_v.addLayout(_vid_hdr)
+        self._video_widget = QVideoWidget()
+        self._video_widget.setStyleSheet("background: #000308;")
+        _vid_v.addWidget(self._video_widget, stretch=1)
+
+        self._video_player = QMediaPlayer(self)
+        self._video_audio  = QAudioOutput(self)
+        self._video_player.setAudioOutput(self._video_audio)
+        self._video_player.setVideoOutput(self._video_widget)
+        self._video_player.mediaStatusChanged.connect(self._on_video_status)
+
+        # Embedded browser — replaces HUD to render a real, live webpage
+        # (news sites, requested URLs) instead of plain extracted text.
+        self._browser_view = None
+        _browser_cont = None
+        if _WEBENGINE:
+            _browser_cont = QWidget()
+            _browser_cont.setStyleSheet("background: #000308;")
+            _browser_v = QVBoxLayout(_browser_cont)
+            _browser_v.setContentsMargins(0, 0, 0, 0)
+            _browser_v.setSpacing(0)
+            _browser_hdr = QHBoxLayout()
+            _browser_hdr.setContentsMargins(8, 5, 8, 5)
+            _browser_title = QLabel("◈  TARAYICI")
+            _browser_title.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+            _browser_title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+            _browser_hdr.addWidget(_browser_title)
+            _browser_hdr.addStretch()
+            _browser_x = QPushButton("✕  KAPAT")
+            _browser_x.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+            _browser_x.setCursor(Qt.CursorShape.PointingHandCursor)
+            _browser_x.setStyleSheet(f"""
+                QPushButton {{
+                    color: {C.TEXT_DIM}; background: transparent;
+                    border: none; padding: 2px 6px;
+                }}
+                QPushButton:hover {{ color: {C.PRI}; }}
+            """)
+            _browser_x.clicked.connect(self._close_browser)
+            _browser_hdr.addWidget(_browser_x)
+            _browser_v.addLayout(_browser_hdr)
+            self._browser_view = QWebEngineView()
+            _browser_v.addWidget(self._browser_view, stretch=1)
+
+        # Stack: 0 = animated HUD, 1 = live camera, 2 = recorded video playback,
+        # 3 = embedded browser (only present if QtWebEngine is installed)
         self._hud_cam_stack = QStackedWidget()
         self._hud_cam_stack.addWidget(self.hud)
         self._hud_cam_stack.addWidget(_cam_cont)
+        self._hud_cam_stack.addWidget(_vid_cont)
+        self._browser_index = -1
+        if _browser_cont is not None:
+            self._browser_index = self._hud_cam_stack.addWidget(_browser_cont)
 
         self._center_split = QSplitter(Qt.Orientation.Vertical)
         self._center_split.setStyleSheet(f"""
@@ -2104,6 +2188,8 @@ class MainWindow(QMainWindow):
         self._camera_sig.connect(self._show_camera_frame)
         self._cam_stream_sig.connect(self._on_cam_stream)
         self._cam_frame_sig.connect(self._on_cam_frame)
+        self._video_sig.connect(self._show_video)
+        self._browser_sig.connect(self._show_browser)
         self._clipboard_sig.connect(self._show_clipboard_panel)
         self._cam_stop = threading.Event()
 
@@ -2211,6 +2297,37 @@ class MainWindow(QMainWindow):
 
     def stop_camera_stream(self) -> None:
         self._cam_stop.set()
+
+    # --- Recorded video playback in HUD area --------------------------------
+    def _show_video(self, path: str) -> None:
+        """Slot — swap the HUD area to show a captured video and play it."""
+        self._hud_cam_stack.setCurrentIndex(2)
+        self._video_player.setSource(QUrl.fromLocalFile(path))
+        self._video_player.play()
+
+    def _close_video(self) -> None:
+        self._video_player.stop()
+        self._hud_cam_stack.setCurrentIndex(0)
+
+    def _on_video_status(self, status) -> None:
+        # Return to the HUD once playback finishes naturally (leave it up on
+        # errors/loading states so the close button remains the only exit).
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self._hud_cam_stack.setCurrentIndex(0)
+
+    # --- Embedded browser (real rendered webpages) in HUD area --------------
+    def _show_browser(self, url: str) -> None:
+        """Slot — swap the HUD area to a real, live-rendered webpage."""
+        if self._browser_view is None:
+            self._show_content("TARAYICI KULLANILAMIYOR",
+                                "QtWebEngine yüklü değil — pip install PyQt6-WebEngine "
+                                "çalıştırıp JARVIS'i yeniden başlatın.")
+            return
+        self._hud_cam_stack.setCurrentIndex(self._browser_index)
+        self._browser_view.setUrl(QUrl(url))
+
+    def _close_browser(self) -> None:
+        self._hud_cam_stack.setCurrentIndex(0)
 
     # ------------------------------------------------------------------
     # Icon generation — arc-reactor style, rendered with Pillow
@@ -3744,6 +3861,14 @@ class JarvisUI:
     def stop_camera_stream(self) -> None:
         """Thread-safe: stop the live camera feed."""
         self._win.stop_camera_stream()
+
+    def show_video(self, path: str) -> None:
+        """Thread-safe: play a recorded video clip in the HUD area."""
+        self._win._video_sig.emit(path)
+
+    def show_url(self, url: str) -> None:
+        """Thread-safe: load a URL in the embedded browser in the HUD area."""
+        self._win._browser_sig.emit(url)
 
     @property
     def assistant_name(self) -> str:

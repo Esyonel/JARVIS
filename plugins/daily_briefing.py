@@ -60,6 +60,7 @@ _NEWS_FEEDS = [
     ("NTV",      "https://www.ntv.com.tr/gundem.rss"),
     ("Sabah",    "https://www.sabah.com.tr/rss/anasayfa.xml"),
 ]
+_NEWS_HOMEPAGE = "https://www.hurriyet.com.tr"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (JARVIS daily_briefing plugin)"}
 _TIMEOUT = 8
 _HEADLINES_PER_SOURCE = 4
@@ -92,8 +93,14 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
     _log(result, player)
     if result and player:
         try:
-            title = "GAZETE BAŞLIKLARI" if wanted == "haberler" or wanted == "haber" or wanted == "gazete" else "GÜNLÜK BRİFİNG"
-            player.show_content(title, result)
+            only_news = want_news and not want_weather and not want_fx
+            if only_news and hasattr(player, "show_url"):
+                # Pure headlines request — show the real newspaper homepage
+                # (colors, images, layout) instead of a plain-text digest.
+                player.show_url(_NEWS_HOMEPAGE)
+            else:
+                title = "GAZETE BAŞLIKLARI" if only_news else "GÜNLÜK BRİFİNG"
+                player.show_content(title, result)
         except Exception:
             pass
     return result or "Sir, I couldn't put together any part of the briefing right now."

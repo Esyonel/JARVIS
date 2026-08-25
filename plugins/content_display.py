@@ -71,8 +71,13 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
 
         if player:
             try:
-                domain = urlparse(url).netloc.replace("www.", "").upper() or "İÇERİK"
-                player.show_content(domain, trimmed)
+                if hasattr(player, "show_url"):
+                    # Real, live-rendered page (colors, images, layout) —
+                    # preferred over a plain-text dump whenever available.
+                    player.show_url(url)
+                else:
+                    domain = urlparse(url).netloc.replace("www.", "").upper() or "İÇERİK"
+                    player.show_content(domain, trimmed)
             except Exception:
                 pass
 

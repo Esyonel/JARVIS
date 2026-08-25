@@ -1,4 +1,5 @@
 PyQt6
+PyQt6-WebEngine
 sounddevice
 google-genai>=2.8.0
 google-generativeai
@@ -42,3 +43,20 @@ scipy
 # Panniantong/agent-reach — internet_reach plugin. NOTE: the "agent-reach" name on
 # PyPI belongs to an unrelated project, so this is pinned straight to the real repo.
 git+https://github.com/Panniantong/agent-reach.git@main
+
+# Vektörel Hafıza & RAG
+chromadb
+lancedb
+
+# Görü, El Hareketi & Nesne Algılama
+mediapipe
+ultralytics
+
+# Medya & Video İşleme
+moviepy
+ffmpeg-python
+
+# Bot & Mesajlaşma Köprüsü
+discord.py
+slack-sdk
+

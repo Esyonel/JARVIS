@@ -20,7 +20,7 @@ except Exception:
     pd = None
 
 # Core JARVIS utilities – these imports follow the existing project conventions.
-from core.ai_text import get_ai_response  # assumed helper that talks to Gemini/LLaMA etc.
+from core.ai_text import generate as get_ai_response  # maps old name to current API
 
 PLUGIN = {
     "name": "document_extractor",

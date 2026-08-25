@@ -23,6 +23,16 @@ import time
 import json
 import sys
 import traceback
+
+# ── Force UTF-8 output so emoji print() calls don't crash on Turkish Windows ──
+# cp1254 (Windows Türkçe) can't encode many Unicode characters (🎤 👂 🔊 etc.)
+# which causes UnicodeEncodeError inside asyncio.TaskGroup, killing JARVIS.
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 from datetime import datetime
 from pathlib import Path
 
