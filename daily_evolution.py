@@ -15,8 +15,10 @@ Guardrails for running with nobody watching:
     ui.py or core/, so a bad unattended change can't stop JARVIS booting.
   - Nothing is pushed unless it compiled AND loaded as a valid plugin.
   - Every run is logged with its result, so a bad streak is visible.
-  - Aborts if the working tree has uncommitted changes it didn't create,
-    so it never sweeps your in-progress edits into an automatic commit.
+  - self_improve.py's own git step only ever `git add`s and commits the ONE
+    new plugin file it just wrote (see plugins/self_improve.py) — so this can
+    run safely even while unrelated work sits uncommitted elsewhere in the
+    tree; it never sweeps that into its own commit.
 
 Run manually:  .venv\\Scripts\\python.exe daily_evolution.py
 """
@@ -86,9 +88,8 @@ def main() -> int:
         log(f"DURDU: git durumu okunamadı — {dirty}")
         return 1
     if dirty.strip():
-        log(f"DURDU: kaydedilmemiş {len(dirty.splitlines())} değişiklik var — "
-            "kendi commit'ime karıştırmamak için bugün atlıyorum.")
-        return 0
+        log(f"Not: {len(dirty.splitlines())} kaydedilmemiş değişiklik var ama devam ediliyor — "
+            "self_improve artık sadece kendi yazdığı dosyayı commit'liyor, başkasına dokunmuyor.")
 
     try:
         from plugins.self_evolution import run as health_check

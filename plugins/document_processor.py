@@ -1,138 +1,170 @@
+"""
+JARVIS plugin — deterministic table extraction from PDF/DOCX/plain-text into
+CSV/JSON/XLSX (tabula/python-docx/pandas — no LLM involved, so numbers and
+cell values come out exactly as they were in the source).
+
+For messier, less-structured content that needs an LLM to make sense of it,
+use document_extractor instead. For a scanned/photographed document with no
+selectable text layer, use document_ocr.
+
+(This file used to have two near-duplicate siblings — document_processing.py
+and document_processing_template.py — independently reinvented by JARVIS's
+own daily self-evolution run because it didn't recognize it already had this
+capability under a different name. This version merges the best parts of all
+three: automatic source-type detection from the file extension, robust Path-
+based path handling, and one worksheet per table in the XLSX output.)
+"""
+
+import json
 import os
-import traceback
-from typing import Dict
+from pathlib import Path
+from typing import List
 
-# Optional imports – handled gracefully if missing
-try:
-    import pandas as pd
-except Exception:  # pragma: no cover
-    pd = None
-
-try:
-    import tabula
-except Exception:  # pragma: no cover
-    tabula = None
-
-try:
-    from docx import Document
-except Exception:  # pragma: no cover
-    Document = None
+import pandas as pd
 
 PLUGIN = {
     "name": "document_processor",
-    "description": "Extract tables from PDF, DOCX or plain text files and export them as CSV, JSON or XLSX.",
+    "description": (
+        "Extracts tables from a PDF, DOCX, or plain-text/CSV file and saves them "
+        "as CSV, JSON, or XLSX — reads cell values directly (tabula/python-docx), "
+        "no AI involved, so numbers come out exact. Use for well-structured "
+        "documents with real tables. For messy/unstructured content, use "
+        "document_extractor instead; for a scanned image with no text layer, use "
+        "document_ocr."
+    ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "file_path": {
-                "type": "string",
-                "description": "Absolute or relative path to the source document (PDF, DOCX, TXT)."
+                "type": "STRING",
+                "description": "Absolute or relative path to the source document (PDF, DOCX, or TXT/CSV).",
             },
             "output_format": {
-                "type": "string",
+                "type": "STRING",
                 "enum": ["csv", "json", "xlsx"],
-                "description": "Desired output format for the extracted tables."
+                "description": "Desired output format for the extracted tables.",
             },
             "output_path": {
-                "type": "string",
-                "description": "Path where the resulting file will be saved. If omitted, a file with the same name as the source and the appropriate extension will be created in the current directory."
-            }
+                "type": "STRING",
+                "description": "Optional path where the result will be saved. If omitted, saved next to the source with the appropriate extension.",
+            },
         },
-        "required": ["file_path", "output_format"]
-    }
+        "required": ["file_path", "output_format"],
+    },
 }
 
 
-def _extract_from_pdf(path: str) -> pd.DataFrame:
-    """Extract the first table from a PDF using tabula.
-    Returns a single DataFrame concatenating all found tables.
-    """
-    if tabula is None:
-        raise RuntimeError("tabula-py library is not installed.")
-    # tabula returns a list of DataFrames – concatenate them
-    tables = tabula.read_pdf(path, pages="all", multiple_tables=True, lattice=True)
-    if not tables:
-        raise ValueError("No tables found in PDF.")
-    return pd.concat(tables, ignore_index=True)
-
-
-def _extract_from_docx(path: str) -> pd.DataFrame:
-    """Extract tables from a DOCX file using python-docx.
-    Concatenates all tables into a single DataFrame.
-    """
-    if Document is None:
-        raise RuntimeError("python-docx library is not installed.")
-    doc = Document(path)
-    all_rows = []
-    for table in doc.tables:
-        for i, row in enumerate(table.rows):
-            cells = [cell.text.strip() for cell in row.cells]
-            all_rows.append(cells)
-    if not all_rows:
-        raise ValueError("No tables found in DOCX.")
-    # Use first row as header if it looks like a header (simple heuristic)
-    df = pd.DataFrame(all_rows)
-    return df
-
-
-def _extract_from_txt(path: str) -> pd.DataFrame:
-    """Attempt to parse a plain‑text file that contains a simple delimited table.
-    This is a very naive fallback – it looks for lines containing tabs or commas.
-    """
-    with open(path, "r", encoding="utf-8") as f:
-        lines = [ln.strip() for ln in f if ln.strip()]
-    # Determine delimiter by inspecting the first non‑empty line
-    delimiter = "\t" if "\t" in lines[0] else ","
-    rows = [ln.split(delimiter) for ln in lines]
-    return pd.DataFrame(rows)
-
-
-def _save_dataframe(df: "pd.DataFrame", fmt: str, out_path: str) -> None:
-    """Save DataFrame in the requested format."""
-    if fmt == "csv":
-        df.to_csv(out_path, index=False)
-    elif fmt == "json":
-        df.to_json(out_path, orient="records", force_ascii=False, indent=2)
-    elif fmt == "xlsx":
-        df.to_excel(out_path, index=False, engine="openpyxl")
-    else:
-        raise ValueError(f"Unsupported format: {fmt}")
-
-
-def run(parameters: Dict, player=None, session_memory=None) -> str:
-    """Entry point for the plugin.
-    Returns a short spoken message indicating success or error.
-    """
+def _extract_tables_from_pdf(file_path: Path) -> List[pd.DataFrame]:
     try:
-        if pd is None:
-            return "I cannot process documents because pandas is not installed."
-        file_path = parameters.get("file_path")
-        output_format = parameters.get("output_format", "csv").lower()
-        output_path = parameters.get("output_path")
+        import tabula
+    except Exception:
+        return []
+    try:
+        tables = tabula.read_pdf(
+            str(file_path),
+            pages="all",
+            multiple_tables=True,
+            pandas_options={"dtype": str},
+        )
+        return tables if isinstance(tables, list) else []
+    except Exception:
+        return []
 
-        if not file_path:
-            return "Please provide a file path to process."
-        if not os.path.isfile(file_path):
-            return f"The file {file_path} does not exist."
 
-        ext = os.path.splitext(file_path)[1].lower()
+def _extract_tables_from_docx(file_path: Path) -> List[pd.DataFrame]:
+    try:
+        from docx import Document
+    except Exception:
+        return []
+    try:
+        doc = Document(str(file_path))
+        tables = []
+        for table in doc.tables:
+            data = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+            if data:
+                tables.append(pd.DataFrame(data))
+        return tables
+    except Exception:
+        return []
+
+
+def _extract_tables_from_txt(file_path: Path) -> List[pd.DataFrame]:
+    """Naive delimited-table detection for plain text/CSV files."""
+    try:
+        lines = [
+            ln
+            for ln in file_path.read_text(encoding="utf-8").splitlines()
+            if ln.strip()
+        ]
+        if not lines:
+            return []
+        delimiter = (
+            "\t"
+            if "\t" in lines[0]
+            else ("," if "," in lines[0] else ";" if ";" in lines[0] else None)
+        )
+        if not delimiter:
+            return []
+        rows = [ln.split(delimiter) for ln in lines]
+        return [pd.DataFrame(rows)]
+    except Exception:
+        return []
+
+
+def _save_tables(
+    tables: List[pd.DataFrame], output_format: str, output_path: Path
+) -> None:
+    if not tables:
+        raise ValueError("No tables were extracted to save.")
+
+    if output_format == "csv":
+        pd.concat(tables, ignore_index=True).to_csv(
+            output_path, index=False, encoding="utf-8"
+        )
+    elif output_format == "json":
+        all_records = [df.to_dict(orient="records") for df in tables]
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(all_records, f, ensure_ascii=False, indent=2)
+    elif output_format == "xlsx":
+        with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+            for idx, df in enumerate(tables, start=1):
+                df.to_excel(writer, sheet_name=f"Table{idx}", index=False)
+    else:
+        raise ValueError(f"Unsupported output format: {output_format}")
+
+
+def run(parameters: dict, player=None, session_memory=None) -> str:
+    try:
+        file_path = Path(parameters.get("file_path", "")).expanduser().resolve()
+        if not file_path.is_file():
+            return f"I couldn't find the file {file_path}. Please check the path and try again."
+
+        output_format = (parameters.get("output_format") or "").lower()
+        if output_format not in {"csv", "json", "xlsx"}:
+            return "The output format must be csv, json, or xlsx."
+
+        output_path_str = parameters.get("output_path")
+        output_path = (
+            Path(output_path_str).expanduser().resolve()
+            if output_path_str
+            else file_path.with_suffix("." + output_format)
+        )
+        os.makedirs(output_path.parent, exist_ok=True)
+
+        ext = file_path.suffix.lower()
         if ext == ".pdf":
-            df = _extract_from_pdf(file_path)
-        elif ext == ".docx":
-            df = _extract_from_docx(file_path)
+            tables = _extract_tables_from_pdf(file_path)
+        elif ext in {".docx", ".doc"}:
+            tables = _extract_tables_from_docx(file_path)
         elif ext in {".txt", ".csv"}:
-            df = _extract_from_txt(file_path)
+            tables = _extract_tables_from_txt(file_path)
         else:
-            return f"Unsupported file type: {ext}. Supported types are PDF, DOCX and plain text."
+            return f"Unsupported file type {ext}. I can process PDF, DOCX, and plain text/CSV files."
 
-        if not output_path:
-            base = os.path.splitext(os.path.basename(file_path))[0]
-            output_path = f"{base}_extracted.{output_format}"
+        if not tables:
+            return "I couldn't detect any tables in the document. Make sure it contains recognizable tables."
 
-        _save_dataframe(df, output_format, output_path)
-        return f"Document processed successfully. The data has been saved to {output_path}."
+        _save_tables(tables, output_format, output_path)
+        return f"The document has been processed successfully. The data was saved to {output_path.name}."
     except Exception as e:
-        # Log traceback for debugging (if a logger is available)
-        tb = traceback.format_exc()
-        # In a real environment we might log tb, but for the spoken response keep it short
-        return f"An error occurred while processing the document: {str(e)}"
+        return f"An error occurred while processing the document: {e}"

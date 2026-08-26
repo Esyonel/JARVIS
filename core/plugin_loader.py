@@ -32,6 +32,7 @@ class PluginRecord:
     file: str = ""
     valid: bool = False
     error: str = ""
+    sensitive: bool = False
 
 
 class PluginRegistry:
@@ -54,6 +55,10 @@ class PluginRegistry:
 
     def has(self, name: str) -> bool:
         return name in self._plugins
+
+    def is_sensitive(self, name: str) -> bool:
+        rec = self._plugins.get(name)
+        return bool(rec and rec.sensitive)
 
     # -- called by main.py from _execute_tool's else branch --
     def run(self, name: str, parameters: dict, player=None, session_memory=None) -> str:
@@ -125,8 +130,10 @@ def _validate(module, filename: str) -> PluginRecord:
         return PluginRecord(name=name, file=filename,
                              error="Missing callable run(parameters, ...) function.")
 
+    sensitive = bool(plugin_meta.get("sensitive", False))
+
     return PluginRecord(name=name, description=description.strip(), parameters=parameters,
-                         run=run_fn, file=filename, valid=True, error="")
+                         run=run_fn, file=filename, valid=True, error="", sensitive=sensitive)
 
 
 def discover_plugins(plugins_dir: Path, core_tool_names: set[str],

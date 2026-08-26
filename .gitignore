@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 config/api_keys.json
+config/granted_folders.json
 memory/long_term.json
 jarvis.log
 uploads/

@@ -1,12 +1,17 @@
-"""Plugin to self‑update JARVIS for advanced features and performance improvements.
+"""Plugin to self-update JARVIS by pulling the latest code from git and
+reinstalling any new dependencies.
 
-The plugin can pull the latest code from a git repository (if provided) or update the
-current installation via ``pip install -U .``. It returns a short spoken response
-indicating success or failure.
+JARVIS is a plain script-based app (run via `python main.py`), not an
+installable pip package — there's no setup.py `setup()` call, no pyproject.toml.
+An earlier version of this plugin ran `pip install -U .`, which pip can't do
+anything with for a directory that isn't a real package; it always failed.
+The actual update mechanism for a project like this is `git pull` +
+reinstalling requirements.txt, same as a human maintainer would do.
 """
 
-import sys
 import subprocess
+import sys
+from pathlib import Path
 from typing import Any, Dict
 
 # Plugin metadata consumed by the core plugin loader
@@ -18,20 +23,22 @@ PLUGIN = {
         "properties": {
             "repo_url": {
                 "type": "string",
-                "description": "Git repository URL to pull updates from. If omitted, updates the current installation."
+                "description": "Git remote URL to pull updates from instead of origin (e.g. a fork). If omitted, pulls from origin."
             },
             "force": {
                 "type": "boolean",
-                "description": "Force re‑installation even if no new version is detected."
+                "description": "Reserved for future use — currently has no effect. Uncommitted local changes always block the update rather than being discarded."
             }
         },
         "required": []
     }
 }
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+
 
 def run(parameters: Dict[str, Any], player=None, session_memory=None) -> str:
-    """Execute the self‑update routine.
+    """Pulls the latest commits via git, then reinstalls requirements.txt.
 
     Args:
         parameters: Dictionary matching the PLUGIN["parameters"] schema.
@@ -39,33 +46,47 @@ def run(parameters: Dict[str, Any], player=None, session_memory=None) -> str:
         session_memory: Optional session memory (unused).
 
     Returns:
-        A short plain‑text message suitable for voice output.
+        A short plain-text message suitable for voice output.
     """
     repo_url = parameters.get("repo_url")
-    # ``force`` currently does not change behaviour because ``pip install -U``
-    # already forces an upgrade if a newer version is available. It is kept for
-    # future extensibility.
-    _ = parameters.get("force", False)
 
     try:
-        if repo_url:
-            # Update directly from the supplied git repository.
-            cmd = [sys.executable, "-m", "pip", "install", "-U", f"git+{repo_url}"]
-        else:
-            # Update the package from the current working directory.
-            cmd = [sys.executable, "-m", "pip", "install", "-U", "."]
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=BASE_DIR,
+            capture_output=True, text=True, check=False,
         )
+        if status.returncode != 0:
+            return f"Update failed: could not read git status ({status.stderr.strip()[:200]})."
+        if status.stdout.strip():
+            return ("Update skipped: there are uncommitted local changes in the JARVIS "
+                    "folder. Commit or stash them first, then ask me to update again.")
 
-        if result.returncode == 0:
-            return "Update completed successfully. Please restart JARVIS to apply the changes."
-        else:
-            error_msg = result.stderr.strip() or "unknown error"
-            return f"Update failed: {error_msg}"
+        pull_cmd = ["git", "pull"]
+        if repo_url:
+            branch = subprocess.run(
+                ["git", "branch", "--show-current"], cwd=BASE_DIR,
+                capture_output=True, text=True, check=False,
+            ).stdout.strip() or "main"
+            pull_cmd = ["git", "pull", repo_url, branch]
+
+        pull = subprocess.run(pull_cmd, cwd=BASE_DIR, capture_output=True, text=True, check=False)
+        if pull.returncode != 0:
+            error_msg = (pull.stderr or pull.stdout).strip() or "unknown error"
+            return f"Update failed: {error_msg[:300]}"
+
+        output = (pull.stdout or "").strip()
+        if "Already up to date" in output or "already up-to-date" in output.lower():
+            return "JARVIS is already up to date."
+
+        pip_result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-r", "requirements.txt", "--quiet"],
+            cwd=BASE_DIR, capture_output=True, text=True, check=False,
+        )
+        if pip_result.returncode != 0:
+            return (f"Code updated but installing new dependencies failed: "
+                    f"{pip_result.stderr.strip()[:300]}. Restart JARVIS, then run "
+                    "'pip install -r requirements.txt' manually.")
+
+        return "Update completed successfully. Please restart JARVIS to apply the changes."
     except Exception as exc:
         return f"An error occurred while updating: {exc}"

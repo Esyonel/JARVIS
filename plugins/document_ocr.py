@@ -1,8 +1,8 @@
 """
 JARVIS plugin — OCR text extraction for scanned/photographed documents.
 
-document_extractor / document_processing / document_processor all assume the
-source PDF or DOCX already contains a text layer (they read it directly).
+document_extractor / document_processor both assume the source PDF or DOCX
+already contains a text layer (they read it directly).
 None of them can handle a PDF that is really just scanned page images, or a
 phone photo of a paper document — that's what this plugin is for: it renders
 each page to an image (PyMuPDF) and runs Tesseract OCR (pytesseract) over it.
@@ -55,42 +55,6 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp"}
 _RENDER_DPI = 300
 
 
-_WINDOWS_FALLBACK_PATHS = [
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-]
-
-
-def _tesseract_ready() -> tuple[bool, str]:
-    try:
-        import pytesseract
-    except ImportError:
-        return False, "pytesseract kütüphanesi kurulu değil."
-    try:
-        pytesseract.get_tesseract_version()
-        return True, ""
-    except Exception:
-        pass
-
-    # Installed (e.g. via winget) but not on PATH — try the known install dirs
-    # directly rather than requiring a machine-wide PATH edit.
-    for candidate in _WINDOWS_FALLBACK_PATHS:
-        if Path(candidate).is_file():
-            pytesseract.pytesseract.tesseract_cmd = candidate
-            try:
-                pytesseract.get_tesseract_version()
-                return True, ""
-            except Exception:
-                continue
-
-    return False, (
-        "Tesseract OCR motoru sistemde kurulu değil (pytesseract sadece bir "
-        "köprü, asıl motor ayrı kurulmalı). Windows'ta: "
-        "https://github.com/UB-Mannheim/tesseract/wiki adresinden kurup, "
-        "kurulum dizinini PATH'e eklemen gerekiyor."
-    )
-
-
 def _ocr_image(image, language: str) -> str:
     import pytesseract
     return pytesseract.image_to_string(image, lang=language)
@@ -108,7 +72,8 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
     if not src.exists():
         return f"Sir, '{file_path}' bulunamadı."
 
-    ready, msg = _tesseract_ready()
+    from core.ocr_utils import ensure_tesseract_ready
+    ready, msg = ensure_tesseract_ready()
     if not ready:
         return f"Sir, {msg}"
 

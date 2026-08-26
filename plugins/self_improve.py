@@ -6,8 +6,12 @@ just drop-in plugins.
 Letting an LLM edit the code that IS the running application has real blast
 radius, so this is wrapped in a hard safety net:
 
-  1. Git checkpoint (commit) of the whole repo BEFORE any change — always
-     possible to get back to a known-good state.
+  1. Before touching the target file, its original content is snapshotted in
+     memory (or "didn't exist" for a new file) — scoped to that ONE file, so
+     this never has to touch, stage, or commit anything else in the repo.
+     (An earlier version did `git add -A` + a whole-tree checkpoint commit,
+     which silently swept up any unrelated uncommitted work in the repo —
+     including this plugin's own file if it had been mid-edit.)
   2. Gemini proposes a TARGETED search/replace edit (old_string -> new_string)
      for an existing file, or full content for a brand new file — never a
      silent full-file rewrite of something already there.
@@ -15,13 +19,16 @@ radius, so this is wrapped in a hard safety net:
      (same rule as a normal precise find/replace) — ambiguous edits are
      rejected rather than guessed at.
   4. Every changed .py file is syntax-checked (py_compile) immediately after.
-  5. ANY failure (old_string not found/not unique, syntax error) reverts the
-     whole checkpoint automatically — JARVIS is never left broken.
+  5. ANY failure (old_string not found/not unique, syntax error) restores the
+     snapshotted file content — JARVIS is never left broken, and no other
+     file in the tree is touched.
   6. Never touches secrets/personal data (config/api_keys.json,
      memory/long_term.json, .env, .git/) regardless of what's asked.
   7. Changes only take effect after JARVIS is restarted — this tool never
      restarts the running process itself, and never touches this very file
      (self_improve.py) while it's the one running.
+  8. On success, only the ONE touched file is `git add`ed and committed —
+     any other dirty files in the working tree are left exactly as they were.
 """
 
 import json
@@ -73,13 +80,6 @@ def run(parameters: dict, player=None, session_memory=None, autonomous: bool = F
         return msg
 
     try:
-        checkpoint = _git_checkpoint(feature)
-    except Exception as e:
-        msg = f"Sir, I couldn't create a safety checkpoint, so I won't proceed: {e}"
-        _log(msg, player)
-        return msg
-
-    try:
         plan = _ask_gemini_for_edit(feature)
     except Exception as e:
         msg = f"Sir, I couldn't draft a change for that: {e}"
@@ -99,24 +99,27 @@ def run(parameters: dict, player=None, session_memory=None, autonomous: bool = F
         _log(msg, player)
         return msg
 
+    file_rel = plan["file"].replace("\\", "/").lstrip("/")
+    original = _snapshot_before_edit(file_rel)
+
     try:
         target = _apply_plan(plan)
     except Exception as e:
-        _git_revert(checkpoint)
+        _restore_snapshot(file_rel, original)
         msg = f"Sir, applying the change failed ({e}) — reverted, JARVIS is untouched."
         _log(msg, player)
         return msg
 
     compile_error = _check_syntax(target)
     if compile_error:
-        _git_revert(checkpoint)
+        _restore_snapshot(file_rel, original)
         msg = f"Sir, the new code had a syntax error ({compile_error}) — reverted automatically, JARVIS is untouched."
         _log(msg, player)
         return msg
 
     import_error = _check_imports_available(target)
     if import_error:
-        _git_revert(checkpoint)
+        _restore_snapshot(file_rel, original)
         msg = (f"Sir, the new code needs a package that isn't installed ({import_error}) — "
                "reverted automatically rather than leaving a plugin that only reports "
                "'library not found'.")
@@ -125,13 +128,13 @@ def run(parameters: dict, player=None, session_memory=None, autonomous: bool = F
 
     plugin_error = _check_plugin_validity(target)
     if plugin_error:
-        _git_revert(checkpoint)
+        _restore_snapshot(file_rel, original)
         msg = f"Sir, the new plugin didn't pass validation ({plugin_error}) — reverted automatically, JARVIS is untouched."
         _log(msg, player)
         return msg
 
     try:
-        _git_finalize(feature)
+        _git_finalize(feature, file_rel)
     except Exception as e:
         print(f"[SelfImprove] Commit finalize failed (change still applied on disk): {e}")
 
@@ -155,26 +158,33 @@ def _git(args: list[str]) -> str:
     return result.stdout
 
 
-def _git_checkpoint(feature: str) -> str:
-    _git(["add", "-A"])
-    status = _git(["status", "--porcelain"])
-    if status.strip():
-        _git(["commit", "-m", f"checkpoint before self-improve: {feature[:80]}"])
-    return _git(["rev-parse", "HEAD"]).strip()
+def _snapshot_before_edit(file_rel: str) -> str | None:
+    """Original content of the file about to be touched, or None if it
+    doesn't exist yet (new_file mode) — used to restore ONLY this file if
+    anything downstream fails, without touching the rest of the tree."""
+    target = BASE_DIR / file_rel
+    return target.read_text(encoding="utf-8") if target.exists() else None
 
 
-def _git_finalize(feature: str) -> None:
-    _git(["add", "-A"])
-    status = _git(["status", "--porcelain"])
-    if status.strip():
-        _git(["commit", "-m", f"self-improve: {feature[:80]}"])
-
-
-def _git_revert(checkpoint_sha: str) -> None:
+def _restore_snapshot(file_rel: str, original: str | None) -> None:
+    target = BASE_DIR / file_rel
     try:
-        _git(["reset", "--hard", checkpoint_sha])
+        if original is None:
+            target.unlink(missing_ok=True)
+        else:
+            target.write_text(original, encoding="utf-8")
     except Exception as e:
-        print(f"[SelfImprove] CRITICAL: revert to {checkpoint_sha} failed: {e}")
+        print(f"[SelfImprove] CRITICAL: restoring {file_rel} failed: {e}")
+
+
+def _git_finalize(feature: str, file_rel: str) -> None:
+    """Stages and commits ONLY the touched file — any other dirty files
+    elsewhere in the working tree (in-progress human edits, say) are left
+    exactly as they were."""
+    _git(["add", "--", file_rel])
+    status = _git(["status", "--porcelain", "--", file_rel])
+    if status.strip():
+        _git(["commit", "-m", f"self-improve: {feature[:80]}", "--", file_rel])
 
 
 # ── Drafting the change ──────────────────────────────────────────────────────

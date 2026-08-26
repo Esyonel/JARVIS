@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import platform
@@ -14,18 +15,63 @@ _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
 _SAFE_ROOTS: list[Path] = [
     Path.home(),
+    Path("D:/nu"),  # owner's main workspace — every project lives under here
 ]
 
+# Folders the owner has explicitly authorized outside the defaults above (via
+# the "grant_access" action, e.g. "erişim izni veriyorum" for a specific
+# path). Persisted so a granted folder stays accessible across restarts —
+# the owner shouldn't have to re-authorize the same folder every session.
+_GRANTS_FILE = Path(__file__).resolve().parent.parent / "config" / "granted_folders.json"
+
+
+def _load_granted_roots() -> list[Path]:
+    try:
+        raw = json.loads(_GRANTS_FILE.read_text(encoding="utf-8"))
+        return [Path(p) for p in raw]
+    except Exception:
+        return []
+
+
+def _save_granted_roots(roots: list[Path]) -> None:
+    _GRANTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _GRANTS_FILE.write_text(
+        json.dumps([str(p) for p in roots], ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+_GRANTED_ROOTS: list[Path] = _load_granted_roots()
+
+
 def _is_safe_path(target: Path) -> bool:
-    """Verilen path _SAFE_ROOTS içinde mi? Değilse işlemi reddet."""
+    """Verilen path _SAFE_ROOTS veya sahibin daha önce izin verdiği bir
+    klasör içinde mi? Değilse işlemi reddet."""
     try:
         resolved = target.resolve()
         return any(
             resolved == root.resolve() or resolved.is_relative_to(root.resolve())
-            for root in _SAFE_ROOTS
+            for root in _SAFE_ROOTS + _GRANTED_ROOTS
         )
     except Exception:
         return False
+
+
+def grant_access(path: str) -> str:
+    """Sahibin sesle açıkça izin verdiği bir klasörü kalıcı olarak erişilebilir
+    listesine ekler (ör. 'erişim izni veriyorum' dedikten sonra çağrılır)."""
+    target = Path(path).expanduser()
+    try:
+        target = target.resolve()
+    except Exception:
+        return f"Invalid path: {path}"
+    if not target.exists():
+        return f"Path not found, nothing granted: {target}"
+    if not target.is_dir():
+        return f"Not a directory, nothing granted: {target}"
+    if not any(target == r.resolve() or target.is_relative_to(r.resolve()) for r in _GRANTED_ROOTS):
+        _GRANTED_ROOTS.append(target)
+        _save_granted_roots(_GRANTED_ROOTS)
+    return f"Access granted: {target} (and everything under it) is now accessible."
 
 def _get_desktop() -> Path:
     if _OS == "Linux":
@@ -535,6 +581,9 @@ def file_controller(
 
         elif action == "info":
             return get_file_info(path, name=name)
+
+        elif action == "grant_access":
+            return grant_access(path)
 
         else:
             return f"Unknown action: '{action}'"

@@ -136,6 +136,62 @@ CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE          = 1024
+_MIC_PCM_BUFFER_BYTES = SEND_SAMPLE_RATE * 2 * 8  # 8s of int16 mono mic audio — voice-gate window
+
+# Core tools that act on the real world (money, messaging on the user's behalf,
+# destructive file ops, shutting the PC/JARVIS down) and therefore require the
+# CURRENT speaker's voice to match the enrolled owner before running. Plugins
+# opt into the same check by setting PLUGIN["sensitive"] = True.
+_SENSITIVE_CORE_TOOLS = {"shutdown_jarvis", "send_message"}
+_DANGEROUS_SETTINGS_RE = re.compile(
+    r"shutdown|restart|reboot|lock[_ ]?screen|toggle[_ ]?wifi|"
+    r"kapat|yeniden ba[şs]lat|kilit|wifi",
+    re.IGNORECASE,
+)
+
+
+def _tool_requires_voice_check(name: str, args: dict, plugin_registry) -> bool:
+    """Pure classification, independent of any live session — a tool call
+    needs the speaker's voice to match the enrolled owner before it runs."""
+    if name in _SENSITIVE_CORE_TOOLS:
+        return True
+    if name == "file_controller" and str(args.get("action", "")).lower() in ("delete", "move", "grant_access"):
+        return True
+    if name == "computer_settings" and _DANGEROUS_SETTINGS_RE.search(
+        f"{args.get('action', '')} {args.get('description', '')}"
+    ):
+        return True
+    return plugin_registry.is_sensitive(name)
+
+
+def _sensitive_action_permitted(turn_source: str, voice_verified: bool) -> bool:
+    """A sensitive tool may only run if the turn that requested it can be
+    trusted as the real owner:
+      - "mic": real speech — trust the voice-biometric result.
+      - "local_ui": typed directly into the desktop app — physical access to
+        the machine already implies trust; no voice sample to check anyway.
+      - "remote_dashboard" / "remote_telegram": a remote text channel can
+        NEVER carry a voice sample, so it's refused outright rather than
+        silently fail-open through the voice check (which treats "no audio
+        to compare" as a pass — correct for an empty mic buffer, wrong for
+        "there was never a microphone involved at all")."""
+    if turn_source in ("remote_dashboard", "remote_telegram"):
+        return False
+    if turn_source == "mic":
+        return voice_verified
+    return True  # local_ui
+
+
+_WATCHDOG_STUCK_AFTER = 20.0  # seconds of silence following user speech before we give up on a session
+
+
+def _watchdog_should_reconnect(last_user_speech: float, last_response_activity: float,
+                                now: float, stuck_after: float = _WATCHDOG_STUCK_AFTER) -> bool:
+    """Pure decision: has the user spoken with zero server activity back since,
+    for longer than `stuck_after`? Caller is responsible for not calling this
+    while JARVIS is mid-speech (that's normal, not stuck)."""
+    heard_response = last_response_activity >= last_user_speech
+    return not heard_response and (now - last_user_speech) > stuck_after
 
 def _get_api_key() -> str:
     """First Gemini key that hasn't hit its quota today.
@@ -164,10 +220,28 @@ def _load_system_prompt() -> str:
 
 _CTRL_RE = re.compile(r"<ctrl\d+>", re.IGNORECASE)
 
-def _clean_transcript(text: str) -> str:    
+def _clean_transcript(text: str) -> str:
     text = _CTRL_RE.sub("", text)
     text = re.sub(r"[\x00-\x08\x0b-\x1f]", "", text)
     return text.strip()
+
+
+def _translate_to_turkish(text: str) -> str:
+    """Best-effort translation for the silent-relay Telegram feed — whatever
+    language JARVIS hears, the owner reads it in Turkish. Falls back to the
+    original text if every AI provider is unavailable, so a relay never goes
+    silent just because translation failed."""
+    from core.ai_text import generate
+    prompt = (
+        "Translate the following text to Turkish, regardless of what language "
+        "it is in. If it is already in Turkish, return it unchanged (just "
+        "clean up obvious speech-to-text noise). Reply with ONLY the "
+        "translated text — no preamble, no quotes, no explanation.\n\n" + text
+    )
+    try:
+        return generate(prompt).strip().strip('"')
+    except Exception:
+        return text
 
 TOOL_DECLARATIONS = [
     {
@@ -355,11 +429,17 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "file_controller",
-        "description": "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage.",
+        "description": (
+            "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage. "
+            "If an action is refused with 'Access denied' because the path is outside the allowed folders, "
+            "and the owner then explicitly says they grant/authorize access to that folder (e.g. 'erişim izni "
+            "veriyorum', 'izin veriyorum', 'buraya bakmana izin veriyorum'), call this again with "
+            "action='grant_access' and that same path — this permanently allows it, then retry the original action."
+        ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action":      {"type": "STRING", "description": "list | create_file | create_folder | delete | move | copy | rename | read | write | find | largest | disk_usage | organize_desktop | info"},
+                "action":      {"type": "STRING", "description": "list | create_file | create_folder | delete | move | copy | rename | read | write | find | largest | disk_usage | organize_desktop | info | grant_access"},
                 "path":        {"type": "STRING", "description": "File/folder path or shortcut: desktop, downloads, documents, home"},
                 "destination": {"type": "STRING", "description": "Destination path for move/copy"},
                 "new_name":    {"type": "STRING", "description": "New name for rename"},
@@ -706,15 +786,24 @@ class JarvisLive:
         self._vision_last_time     = 0.0     # monotonic time of last screen_process call (cooldown guard)
         self._vision_busy          = False   # True while a vision capture/inject cycle is in flight
         self._interrupted          = False   # True while draining audio after user interrupt
+        self._mic_pcm_lock         = threading.Lock()
+        self._recent_mic_pcm       = bytearray()   # rolling buffer of raw mic PCM — voice-gate reads this
         self.ui.on_text_command   = self._on_text_command
         self.ui.on_remote_clicked = self._make_remote_key
         self.ui.on_interrupt      = self.interrupt
         self._turn_done_event: asyncio.Event | None = None
         self._dashboard     = None
+        self._telegram      = None
+        # Which channel most recently injected a user turn — "mic" | "local_ui" |
+        # "remote_dashboard" | "remote_telegram". Sensitive tools use this: a text
+        # channel can never carry a voice sample, so remote-text turns are refused
+        # outright rather than silently fail-open through the voice check.
+        self._pending_turn_source = "mic"
         self._briefing_sent    = False          # morning briefing fires once per process
         self._sys_monitor      = SystemMonitor()  # persistent cooldown state
         self._proactive        = ProactiveEngine()
         self._last_user_speech = time.monotonic()  # updated on every user utterance
+        self._last_response_activity = time.monotonic()  # updated on ANY server message — watchdog uses this
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
 
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
@@ -774,6 +863,7 @@ class JarvisLive:
         return url, key, f"{url}/auto-login?key={key}", manual
 
     def _on_text_command(self, text: str):
+        self._pending_turn_source = "local_ui"   # typed directly into the desktop app — trusted like physical presence
         if not self._loop or not self.session:
             return
         asyncio.run_coroutine_threadsafe(
@@ -783,6 +873,25 @@ class JarvisLive:
             ),
             self._loop
         )
+
+    async def _on_telegram_message(self, text: str) -> None:
+        """Called by TelegramBridge on the SAME event loop (the bridge runs
+        as a task in this loop, so a direct await is correct here — no
+        run_coroutine_threadsafe needed, unlike the mic callback which runs
+        on a separate thread)."""
+        self._pending_turn_source = "remote_telegram"
+        if not self.session:
+            return
+        await self.session.send_client_content(
+            turns={"parts": [{"text": text}]},
+            turn_complete=True,
+        )
+
+    async def _relay_to_telegram(self, heard_text: str) -> None:
+        """Silent-relay mode: translate whatever language was heard to
+        Turkish (AI call off the event loop) and send it to Telegram."""
+        translated = await asyncio.to_thread(_translate_to_turkish, heard_text)
+        await self._telegram.send(f"🎤 {translated}")
 
     def set_speaking(self, value: bool):
         with self._speaking_lock:
@@ -821,11 +930,6 @@ class JarvisLive:
             ),
             self._loop
         )
-
-    def speak_error(self, tool_name: str, error: str):
-        short = str(error)[:120]
-        self.ui.write_log(f"ERR: {tool_name} — {short}")
-        self.speak(f"Sir, {tool_name} encountered an error. {short}")
 
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
@@ -896,12 +1000,46 @@ class JarvisLive:
             cfg["proactivity"] = types.ProactivityConfig(proactive_audio=True)
         return types.LiveConnectConfig(**cfg)
 
+    def _voice_verified(self) -> bool:
+        """True if the enrolled owner's voice matches the last ~8s of mic
+        audio — or if nobody has enrolled a voice profile yet (fail-open,
+        matching core/voice_id.py's own philosophy: a broken/absent check
+        must never make JARVIS refuse everything)."""
+        from core import voice_id
+        if not voice_id.is_enrolled():
+            return True
+        with self._mic_pcm_lock:
+            pcm = bytes(self._recent_mic_pcm)
+        if not pcm:
+            return True
+        return voice_id.matches_owner(pcm)
+
     async def _execute_tool(self, fc) -> types.FunctionResponse:
         name = fc.name
         args = dict(fc.args or {})
 
         print(f"[JARVIS] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
+
+        if self.ui.telegram_relay_enabled:
+            self.ui.write_log(f"SYS: '{name}' çalıştırılıyor — sessiz dinleme/Telegram aktarım modu aktif (yalnızca konuşma bastırılıyor).")
+
+        if _tool_requires_voice_check(name, args, self._plugin_registry):
+            turn_source = self._pending_turn_source
+            voice_ok = self._voice_verified() if turn_source == "mic" else False
+            if not _sensitive_action_permitted(turn_source, voice_ok):
+                reason = ("a remote text channel can't be voice-verified" if turn_source.startswith("remote")
+                          else "voice did not match the enrolled owner")
+                self.ui.write_log(f"SEC: '{name}' blocked — {reason} (source={turn_source}).")
+                if not self.ui.muted:
+                    self.ui.set_state("LISTENING")
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result": (
+                        f"Refused: {reason}. Tell the user, briefly and politely, that you "
+                        "couldn't confirm their identity for this action."
+                    )}
+                )
 
         if name == "save_memory":
             category = args.get("category", "notes")
@@ -1075,9 +1213,14 @@ class JarvisLive:
                     result = f"Unknown tool: {name}"
 
         except Exception as e:
+            # Report the failure through the function response only — NOT via
+            # speak_error's own send_client_content — because a tool_call turn
+            # is still unresolved at this point (send_tool_response hasn't
+            # been sent yet). Injecting a second turn here races the pending
+            # one and can leave both without a spoken reply.
             result = f"Tool '{name}' failed: {e}"
+            self.ui.write_log(f"ERR: {name} — {str(e)[:120]}")
             traceback.print_exc()
-            self.speak_error(name, e)
 
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
@@ -1112,6 +1255,15 @@ class JarvisLive:
                     self.out_queue.put_nowait,
                     {"data": data, "mime_type": "audio/pcm"}
                 )
+
+                # Rolling buffer of the user's own recent raw mic audio — the
+                # voice-gate checks this against the enrolled owner profile
+                # before letting a sensitive tool run (see _voice_verified()).
+                with self._mic_pcm_lock:
+                    self._recent_mic_pcm.extend(data)
+                    excess = len(self._recent_mic_pcm) - _MIC_PCM_BUFFER_BYTES
+                    if excess > 0:
+                        del self._recent_mic_pcm[:excess]
 
                 # Visual mic-activity meter (independent of any AI response) —
                 # throttled to ~8 updates/sec so it doesn't flood the UI thread.
@@ -1155,10 +1307,15 @@ class JarvisLive:
         try:
             while True:
                 async for response in self.session.receive():
+                    self._last_response_activity = time.monotonic()
 
                     if response.data:
                         if self._interrupted:
                             pass  # discard: interrupted
+                        elif self._pending_turn_source == "remote_telegram":
+                            pass  # discard: Telegram-originated turn — reply goes back as text only, no PC audio
+                        elif self.ui.telegram_relay_enabled:
+                            pass  # discard: silent listening/relay mode — JARVIS only listens, never speaks
                         else:
                             if self._turn_done_event and self._turn_done_event.is_set():
                                 self._turn_done_event.clear()
@@ -1182,6 +1339,7 @@ class JarvisLive:
                             if txt:
                                 in_buf.append(txt)
                                 self._last_user_speech = time.monotonic()
+                                self._pending_turn_source = "mic"
 
                         if sc.turn_complete:
                             if self._turn_done_event:
@@ -1205,6 +1363,8 @@ class JarvisLive:
                                         "text": full_in,
                                         "ts": datetime.now().isoformat(),
                                     }))
+                                if self._telegram and self.ui.telegram_relay_enabled:
+                                    asyncio.create_task(self._relay_to_telegram(full_in))
                             in_buf = []
 
                             full_out = " ".join(out_buf).strip()
@@ -1217,6 +1377,8 @@ class JarvisLive:
                                         "text": full_out,
                                         "ts": datetime.now().isoformat(),
                                     }))
+                                if self._telegram and self._pending_turn_source == "remote_telegram":
+                                    asyncio.create_task(self._telegram.send(full_out))
                             out_buf = []
 
                             # Vision injection: model finished tool-response turn → now send the image
@@ -1573,6 +1735,29 @@ class JarvisLive:
             except Exception as e:
                 print(f"[Proactive] ⚠️ {e}")
 
+    # ── Watchdog ─────────────────────────────────────────────────────────────────
+
+    async def _run_watchdog(self) -> None:
+        """
+        Safety net: if the user spoke and JARVIS produces zero server activity
+        (no audio, no transcript, no tool call) for too long afterward, the
+        Live session is treated as stuck and torn down so run()'s reconnect
+        loop replaces it — rather than leaving the user talking to a session
+        that will never answer again.
+        """
+        while True:
+            await asyncio.sleep(5)
+            if not self.session:
+                continue
+            with self._speaking_lock:
+                if self._is_speaking:
+                    continue
+            since_speech = time.monotonic() - self._last_user_speech
+            if _watchdog_should_reconnect(self._last_user_speech, self._last_response_activity,
+                                           time.monotonic()):
+                self.ui.write_log("SYS: Yanıt gelmedi — bağlantı yenileniyor.")
+                raise RuntimeError(f"watchdog: no response {since_speech:.0f}s after user spoke")
+
     # ── Phone audio relay ────────────────────────────────────────────────────────
 
     async def _relay_phone_audio(self) -> None:
@@ -1614,6 +1799,7 @@ class JarvisLive:
                         break
                     await asyncio.sleep(0.1)
                 if self.session:
+                    self._pending_turn_source = "remote_dashboard"
                     await self.session.send_client_content(
                         turns={"parts": [{"text": text}]},
                         turn_complete=True,
@@ -1655,6 +1841,22 @@ class JarvisLive:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
 
+        # Start Telegram bridge (optional — needs telegram_bot_token/telegram_chat_id
+        # in config/api_keys.json; see plugins/telegram_notify.py's setup instructions)
+        try:
+            from core.telegram_bridge import TelegramBridge
+            if TelegramBridge.is_configured():
+                self._telegram = TelegramBridge(
+                    on_message=self._on_telegram_message,
+                    logger=lambda msg: (print(f"[Telegram] {msg}"), self.ui.write_log(msg)),
+                )
+                asyncio.create_task(self._telegram.start())
+            else:
+                self._telegram = None
+        except Exception as e:
+            print(f"[Telegram] Disabled: {e}")
+            self._telegram = None
+
         while True:
             try:
                 print("[JARVIS] Connecting...")
@@ -1690,6 +1892,7 @@ class JarvisLive:
                         self._vision_busy          = False
                         self._vision_last_time     = 0.0
                         self._interrupted          = False
+                        self._last_response_activity = time.monotonic()
 
                         print("[JARVIS] Connected.")
                         # Count the live session against the key that carried it,
@@ -1713,6 +1916,7 @@ class JarvisLive:
                         tg.create_task(self._run_system_monitor())
                         tg.create_task(self._run_background_monitor())
                         tg.create_task(self._run_proactive_mode())
+                        tg.create_task(self._run_watchdog())
                         if self._dashboard:
                             tg.create_task(self._relay_phone_audio())
 

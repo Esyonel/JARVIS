@@ -355,6 +355,7 @@ class HudCanvas(QWidget):
 
         self.muted    = False
         self.speaking = False
+        self.silent_relay = False   # listening only, relaying to Telegram — never speaks
         self.state    = "INITIALISING"
         self._assistant_name = assistant_name
 
@@ -571,6 +572,9 @@ class HudCanvas(QWidget):
         sy = cy + fw * 0.40
         if self.muted:
             txt, col = "⊘  MUTED",     qcol(C.MUTED_C)
+        elif self.silent_relay:
+            sym = "◉" if self._blink else "○"
+            txt, col = f"{sym}  SESSİZ DİNLEME", qcol(C.GREEN)
         elif self.speaking:
             txt, col = "●  SPEAKING",  qcol(C.ACC)
         elif self.state == "THINKING":
@@ -1977,6 +1981,7 @@ class MainWindow(QMainWindow):
         self.on_interrupt      = None   # callable: () -> None — stop JARVIS mid-speech
         self.get_plugins       = None   # callable: () -> list[dict], set by JarvisLive
         self._muted            = True   # başlangıçta mikrofon kapalı — kullanıcı elle aktif eder
+        self.telegram_relay_enabled = False   # açıkken duyulan her şey Telegram'a yazı olarak gönderilir
         self._current_file: str | None = None
         self._remote_overlay: RemoteKeyOverlay | None = None
         self._customize_overlay: CustomizeOverlay | None = None
@@ -2899,6 +2904,15 @@ class MainWindow(QMainWindow):
 
         lay.addStretch()
 
+        self._telegram_relay_btn = QPushButton()
+        self._telegram_relay_btn.setFixedHeight(34)
+        self._telegram_relay_btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        self._telegram_relay_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._telegram_relay_btn.clicked.connect(self._toggle_telegram_relay)
+        self._style_telegram_relay_btn()
+        lay.addWidget(self._telegram_relay_btn)
+        lay.addSpacing(4)
+
         for txt, col in [
             ("YZ ÇEKİRDEĞİ\nAKTİF", C.GREEN),
             ("GÜVENLİK\nTEMİZ",     C.PRI),
@@ -3673,6 +3687,40 @@ class MainWindow(QMainWindow):
                 QPushButton:hover {{ background: #001f10; }}
             """)
 
+    def _toggle_telegram_relay(self):
+        self.telegram_relay_enabled = not self.telegram_relay_enabled
+        self._style_telegram_relay_btn()
+        self.hud.silent_relay = self.telegram_relay_enabled
+        if self.telegram_relay_enabled:
+            self._apply_state("LISTENING")
+            self._log.append_log(
+                "SYS: Sessiz dinleme modu açıldı — JARVIS konuşmayacak, "
+                "duyduğu her şeyi Telegram'a yazı olarak gönderecek."
+            )
+        else:
+            self._apply_state("LISTENING")
+            self._log.append_log("SYS: Sessiz dinleme modu kapatıldı, JARVIS normal şekilde yanıt verecek.")
+
+    def _style_telegram_relay_btn(self):
+        if self.telegram_relay_enabled:
+            self._telegram_relay_btn.setText("TELEGRAM'A\n●  AKTARIM AÇIK")
+            self._telegram_relay_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: #00140a; color: {C.GREEN};
+                    border: 1px solid {C.GREEN}; border-radius: 3px;
+                }}
+                QPushButton:hover {{ background: #001f10; }}
+            """)
+        else:
+            self._telegram_relay_btn.setText("TELEGRAM'A\n○  AKTARIM KAPALI")
+            self._telegram_relay_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {C.PANEL2}; color: {C.TEXT_DIM};
+                    border: 1px solid {C.BORDER_A}; border-radius: 3px;
+                }}
+                QPushButton:hover {{ background: {C.PANEL2}; border-color: {C.PRI_DIM}; }}
+            """)
+
     def _send(self):
         txt = self._input.text().strip()
         if not txt: return
@@ -3780,6 +3828,10 @@ class JarvisUI:
     def muted(self, v: bool):
         if v != self._win._muted:
             self._win._toggle_mute()
+
+    @property
+    def telegram_relay_enabled(self) -> bool:
+        return self._win.telegram_relay_enabled
 
     @property
     def current_file(self) -> str | None:

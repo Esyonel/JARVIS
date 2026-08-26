@@ -389,3 +389,12 @@ JARVIS'e eklenen yeni nesil yetenekler ve eklentiler:
 * **Kullanım:** JARVIS'in Discord ve Slack üzerinden uzaktan bildirim göndermesini ve komut almasını sağlar.
 
 
+
+
+### 📦 Yeni Eklenen Bileşen: Python: pip
+- **Tür:** Python Kütüphanesi
+- **Açıklama:** JARVIS tarafından otonom kurulan pip paketi.
+- **Kurulum Komutu:**
+```powershell
+pip install pip
+```

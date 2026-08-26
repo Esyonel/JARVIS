@@ -48,6 +48,11 @@ git+https://github.com/Panniantong/agent-reach.git@main
 chromadb
 lancedb
 
+# 3D Model Üretimi & Önizleme (object_3d_designer)
+trimesh
+manifold3d
+matplotlib
+
 # Görü, El Hareketi & Nesne Algılama
 mediapipe
 ultralytics
@@ -59,4 +64,9 @@ ffmpeg-python
 # Bot & Mesajlaşma Köprüsü
 discord.py
 slack-sdk
+python-telegram-bot
+
+# Geliştirme — testler (tests/) ve otomatik kod biçimlendirme
+pytest
+black
 

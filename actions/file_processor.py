@@ -537,11 +537,12 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
                 "ogg": "audio/ogg", "m4a": "audio/mp4",
                 "aac": "audio/aac", "flac": "audio/flac",
             }.get(path.suffix.lstrip(".").lower(), "audio/mpeg")
+            from google.genai import types
             response = model.generate_content([
                 "Transcribe all speech in this audio file accurately.",
-                {"mime_type": mime, "data": content}
+                types.Part.from_bytes(data=content, mime_type=mime)
             ])
-            result = response.text.strip()
+            result = (response.text or "").strip()
             if params.get("save", True):
                 out = _output_path(path, "transcript", ".txt")
                 out.write_text(result, encoding="utf-8")
