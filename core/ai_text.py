@@ -42,6 +42,31 @@ _OPENAI_COMPATIBLE = [
     ("openrouter_api_key", "https://openrouter.ai/api/v1",   "meta-llama/llama-3.3-70b-instruct:free"),
 ]
 
+# task="code" override: only listed where a provider has a genuinely better,
+# purpose-built free coding model than its general default above. Verified
+# live against /models on 2026-08-31 — Groq and Cerebras had no dedicated
+# coder model in their free catalog at that time (their general default
+# above is already their strongest option), OpenRouter did.
+_CODING_MODELS = {
+    "openrouter_api_key": "poolside/laguna-s-2.1:free",  # coding-agent model, 70.2% Terminal-Bench 2.1
+}
+
+# task="code": try the actual best specialist FIRST, not just swap its model
+# in at OpenRouter's normal (last) turn — Groq would otherwise always answer
+# first and the better coder model would never get used in practice. Falls
+# through to the rest of _OPENAI_COMPATIBLE, then Gemini, same as usual.
+_TASK_PRIORITY = {
+    "code": ["openrouter_api_key", "groq_api_key", "cerebras_api_key"],
+}
+
+
+def _ordered_providers(task: str) -> list[tuple[str, str, str]]:
+    order = _TASK_PRIORITY.get(task)
+    if not order:
+        return _OPENAI_COMPATIBLE
+    by_key = {key_name: (key_name, base_url, model) for key_name, base_url, model in _OPENAI_COMPATIBLE}
+    return [by_key[k] for k in order if k in by_key]
+
 
 def _config() -> dict:
     try:
@@ -60,8 +85,13 @@ def _is_exhausted(error: Exception) -> bool:
     return any(k in str(error) for k in ("429", "RESOURCE_EXHAUSTED", "quota", "insufficient_quota"))
 
 
-def generate(prompt: str, model: str | None = None) -> str:
+def generate(prompt: str, model: str | None = None, task: str = "general") -> str:
     """Returns generated text, trying each configured provider in turn.
+
+    task="code" picks each provider's best available coding model (see
+    _CODING_MODELS) instead of its general-purpose default — same fallback
+    order and exhaustion handling either way, only the model choice changes.
+    An explicit `model` always wins over both.
 
     Raises RuntimeError only if every configured provider failed — the message
     lists what was tried and why each one failed, so the cause is never guessed at.
@@ -76,13 +106,14 @@ def generate(prompt: str, model: str | None = None) -> str:
     # first and only reaches Gemini if every one of them is unavailable.
     from core.api_usage import record
 
-    for key_name, base_url, default_model in _OPENAI_COMPATIBLE:
+    for key_name, base_url, default_model in _ordered_providers(task):
         key = cfg.get(key_name)
         if not key:
             continue
         provider = key_name.replace("_api_key", "")
+        chosen_model = model or (_CODING_MODELS.get(key_name) if task == "code" else None) or default_model
         try:
-            text = _openai_compatible(key, base_url, default_model, prompt)
+            text = _openai_compatible(key, base_url, chosen_model, prompt)
             record(provider)
             return text
         except Exception as e:

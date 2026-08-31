@@ -19,15 +19,22 @@ radius, so this is wrapped in a hard safety net:
      (same rule as a normal precise find/replace) — ambiguous edits are
      rejected rather than guessed at.
   4. Every changed .py file is syntax-checked (py_compile) immediately after.
-  5. ANY failure (old_string not found/not unique, syntax error) restores the
-     snapshotted file content — JARVIS is never left broken, and no other
-     file in the tree is touched.
+  5. ANY failure (old_string not found/not unique, syntax error, missing
+     import, failed plugin-schema check, or a crash during the runtime smoke
+     test below) restores the snapshotted file content — JARVIS is never
+     left broken, and no other file in the tree is touched.
   6. Never touches secrets/personal data (config/api_keys.json,
      memory/long_term.json, .env, .git/) regardless of what's asked.
-  7. Changes only take effect after JARVIS is restarted — this tool never
+  7. For a new/edited plugin, the file is actually imported and its run({})
+     is called once in an isolated subprocess before being kept — a real
+     crash or hang there can't touch the live JARVIS process. This reuses
+     the already-installed packages rather than provisioning a whole fresh
+     venv per change, which would be too slow for a voice-triggered request;
+     the isolation is a separate OS process, not a separate environment.
+  8. Changes only take effect after JARVIS is restarted — this tool never
      restarts the running process itself, and never touches this very file
      (self_improve.py) while it's the one running.
-  8. On success, only the ONE touched file is `git add`ed and committed —
+  9. On success, only the ONE touched file is `git add`ed and committed —
      any other dirty files in the working tree are left exactly as they were.
 """
 
@@ -43,9 +50,11 @@ PLUGIN = {
         "Extends JARVIS's own source code — including core files, not just "
         "plugins — based on a spoken feature request. Use for: 'kendine şu "
         "özelliği ekle', 'kendi kodunu geliştir', 'şunu kendine yaz'. Every "
-        "change is git-checkpointed and syntax-validated automatically; a "
-        "broken change is reverted on the spot, never left in place. Changes "
-        "need a JARVIS restart to take effect — say so after applying one."
+        "change is git-checkpointed, syntax-validated, and (for new plugins) "
+        "actually run once in an isolated subprocess before it's kept — a "
+        "broken or crashing change is reverted on the spot, never left in "
+        "place. Changes need a JARVIS restart to take effect — say so after "
+        "applying one."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -130,6 +139,13 @@ def run(parameters: dict, player=None, session_memory=None, autonomous: bool = F
     if plugin_error:
         _restore_snapshot(file_rel, original)
         msg = f"Sir, the new plugin didn't pass validation ({plugin_error}) — reverted automatically, JARVIS is untouched."
+        _log(msg, player)
+        return msg
+
+    smoke_error = _check_runtime_smoke_test(target)
+    if smoke_error:
+        _restore_snapshot(file_rel, original)
+        msg = f"Sir, the new code crashed when I actually ran it ({smoke_error}) — reverted automatically, JARVIS is untouched."
         _log(msg, player)
         return msg
 
@@ -230,20 +246,24 @@ For editing an existing file (prefer this when changing existing behavior):
 old_string must be copied EXACTLY as it appears in the file, including
 whitespace. Keep the change minimal and focused on the request."""
 
-    text = gemini_with_retry(None, prompt)
+    text = gemini_with_retry(None, prompt, task="code")
     text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     return json.loads(text)
 
 
 def gemini_with_retry(client, prompt: str, model: str = "gemini-flash-latest",
-                      attempts: int = 4) -> str:
-    """Kept as the shared entry point (daily_evolution imports this), but the
-    work now goes through core.ai_text.generate, which retries transient errors
-    AND fails over to Groq/Cerebras/OpenRouter when Gemini's daily free quota
-    (only ~20 calls) runs out. The `client` argument is ignored — providers are
-    resolved from config each call so adding a key takes effect immediately."""
+                      attempts: int = 4, task: str = "general") -> str:
+    """Kept as the shared entry point, but the work now goes through
+    core.ai_text.generate, which retries transient errors AND fails over to
+    Groq/Cerebras/OpenRouter when Gemini's daily free quota (only ~20 calls)
+    runs out. The `client` argument is ignored — providers are resolved from
+    config each call so adding a key takes effect immediately.
+
+    task="code" (used for self-edits) makes each provider pick its best
+    available free coding model instead of its general-purpose default —
+    see core.ai_text._CODING_MODELS."""
     from core.ai_text import generate
-    return generate(prompt)
+    return generate(prompt, task=task)
 
 
 def _validate_plan(plan: dict) -> tuple[bool, str]:
@@ -359,6 +379,42 @@ def _check_plugin_validity(file_rel: str) -> str | None:
         return None if rec.valid else rec.error
     except Exception as e:
         return str(e)
+
+
+def _check_runtime_smoke_test(file_rel: str) -> str | None:
+    """Actually imports the module and calls run({}) once, in a separate
+    subprocess — a real crash/hang in generated code can never take down the
+    live JARVIS process this way, and it's much faster than provisioning a
+    whole fresh venv per change (this reuses the already-installed packages,
+    it just runs in its own OS process so a bad import-time side effect,
+    infinite loop, or segfault is fully isolated). Only for plugins/*.py —
+    core-file edits already went through syntax + import checks above; there
+    is no safe generic way to smoke-test an arbitrary core-file change
+    without running the whole app."""
+    if not file_rel.startswith("plugins/") or Path(file_rel).name.startswith("_"):
+        return None
+
+    target = BASE_DIR / file_rel
+    harness = (
+        "import sys, importlib.util\n"
+        f"sys.path.insert(0, {str(BASE_DIR)!r})\n"
+        f"spec = importlib.util.spec_from_file_location('_smoke_test_module', {str(target)!r})\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)\n"
+        "result = module.run({}, player=None, session_memory=None)\n"
+        "if not isinstance(result, str):\n"
+        "    raise TypeError(f'run() returned {type(result).__name__}, expected str')\n"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", harness],
+            cwd=str(BASE_DIR), capture_output=True, text=True, timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return "run() did not return within 30s (possible infinite loop/hang)"
+    if result.returncode != 0:
+        return (result.stderr or result.stdout).strip()[:500]
+    return None
 
 
 def _log(message: str, player=None) -> None:
