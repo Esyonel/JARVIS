@@ -1,5 +1,10 @@
 {
   "mcpServers": {
+    "playwright": {
+      "description": "Official Microsoft Playwright MCP for browser automation (navigate, click, fill forms, screenshots, network/console inspection). Lets Claude Code drive a real browser to test JARVIS's dashboard (dashboard/static/app.html, login.html) and any web-facing features directly.",
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    },
     "elevenlabs": {
       "description": "Official ElevenLabs MCP for text-to-speech, voice cloning, audio processing, and transcription. JARVIS's core/tts.py already supports ElevenLabs as a TTS engine (config key elevenlabs_api_key) — this lets Claude Code test/design voices directly.",
       "command": "uvx",
@@ -9,6 +14,16 @@
         "ELEVENLABS_MCP_BASE_PATH": "D:\\nu\\JARVIS\\uploads",
         "ELEVENLABS_MCP_OUTPUT_MODE": "files"
       }
+    },
+    "chrome-devtools": {
+      "description": "Official Chrome DevTools MCP — real Chrome DevTools Protocol access (network/console inspection, performance/Lighthouse traces, DOM interaction, screenshots). Gives JARVIS itself a browser-control tool at runtime, not just Claude Code.",
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"]
+    },
+    "blender": {
+      "description": "BlenderMCP — live control of a running Blender scene (scene/object info, viewport screenshots, arbitrary Python execution, Poly Haven/Sketchfab/Poly Pizza asset import, Hyper3D/Hunyuan3D text-to-3D generation). Requires Blender open with its BlenderMCP addon (View3D > Sidebar > BlenderMCP) — the addon auto-starts its socket server on port 9876 when Blender loads. Complements plugins/blender_controller.py, which drives headless Blender for one-shot renders/exports without needing Blender open.",
+      "command": "uvx",
+      "args": ["blender-mcp"]
     }
   }
 }
