@@ -1,7 +1,9 @@
+import json
 import time
 import subprocess
 import platform
 import shutil
+from pathlib import Path
 
 try:
     import psutil
@@ -10,6 +12,7 @@ except ImportError:
     _PSUTIL = False
 
 _SYSTEM = platform.system()
+_PATH_CACHE_FILE = Path(__file__).resolve().parent.parent / "memory" / "app_paths.json"
 
 _APP_ALIASES: dict[str, dict[str, str]] = {
 
@@ -77,9 +80,112 @@ def _normalize(raw: str) -> str:
 
     return raw  
 
-def _launch_windows(app_name: str) -> bool:
+def _load_path_cache() -> dict[str, str]:
+    try:
+        return json.loads(_PATH_CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 
-    if shutil.which(app_name) or shutil.which(app_name.split(".")[0]):
+
+def _remember_path(key: str, path: str) -> None:
+    try:
+        cache = _load_path_cache()
+        cache[key] = path
+        _PATH_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _PATH_CACHE_FILE.write_text(json.dumps(cache, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"[open_app] Remembered path for '{key}': {path}")
+    except Exception as e:
+        print(f"[open_app] Could not save path cache: {e}")
+
+
+def _lookup_app_paths_registry(exe_name: str) -> str | None:
+    """Windows 'App Paths' registry — instant lookup, no UI automation.
+    Most installers (Chrome, Firefox, VLC...) register themselves here."""
+    import winreg
+    name = exe_name if exe_name.lower().endswith(".exe") else f"{exe_name}.exe"
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            key_path = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{name}"
+            with winreg.OpenKey(hive, key_path) as key:
+                path, _ = winreg.QueryValueEx(key, None)
+                if path and Path(path).exists():
+                    return path
+        except OSError:
+            continue
+    return None
+
+
+_APPS_FOLDER_PREFIX = "shell:AppsFolder\\"
+
+
+def _lookup_start_apps(app_name: str) -> str | None:
+    """Resolves a display name to its Start Menu AppID (AUMID) via Get-StartApps.
+
+    This is what covers Microsoft Store / UWP apps (WhatsApp, Spotify, Instagram…):
+    they have no .exe on PATH and no 'App Paths' registry entry, so without this
+    they'd fall through to typing into the Start Menu search box.
+    """
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             # Without the explicit OutputEncoding, PowerShell emits the system
+             # ANSI codepage (cp1254 on Turkish Windows) and app names with
+             # non-ASCII characters break JSON decoding.
+             "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
+             "Get-StartApps | ConvertTo-Json -Compress"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=20,
+        )
+        entries = json.loads(proc.stdout or "[]")
+    except Exception as e:
+        print(f"[open_app] Get-StartApps lookup failed: {e}")
+        return None
+
+    if isinstance(entries, dict):
+        entries = [entries]
+
+    key = app_name.lower().strip()
+    exact, partial = None, None
+    for entry in entries:
+        name = (entry.get("Name") or "").lower().strip()
+        app_id = entry.get("AppID") or ""
+        if not name or not app_id:
+            continue
+        if name == key:
+            exact = app_id
+            break
+        if partial is None and (name.startswith(key) or key in name):
+            partial = app_id
+    return exact or partial
+
+
+def _launch_target(target: str) -> None:
+    """Starts an already-resolved launch target: either an AppsFolder AUMID
+    (Store apps, launched through explorer) or a plain executable path."""
+    if target.startswith(_APPS_FOLDER_PREFIX):
+        subprocess.Popen(["explorer.exe", target])
+    else:
+        subprocess.Popen([target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _cached_target_usable(target: str) -> bool:
+    # An AUMID can't be stat'ed; only real paths are checked for existence.
+    return target.startswith(_APPS_FOLDER_PREFIX) or Path(target).exists()
+
+
+def _launch_windows(app_name: str, cache_key: str | None = None) -> bool:
+
+    cached_path = _load_path_cache().get(cache_key) if cache_key else None
+    if cached_path and _cached_target_usable(cached_path):
+        try:
+            _launch_target(cached_path)
+            time.sleep(1.0)
+            return True
+        except Exception as e:
+            print(f"[open_app] Cached target '{cached_path}' failed, re-resolving: {e}")
+
+    which_path = shutil.which(app_name) or shutil.which(app_name.split(".")[0])
+    if which_path:
         try:
             subprocess.Popen(
                 app_name,
@@ -88,9 +194,22 @@ def _launch_windows(app_name: str) -> bool:
                 stderr=subprocess.DEVNULL,
             )
             time.sleep(1.5)
+            if cache_key:
+                _remember_path(cache_key, which_path)
             return True
         except Exception as e:
             print(f"[open_app] subprocess failed: {e}")
+
+    if cache_key:
+        registry_path = _lookup_app_paths_registry(app_name)
+        if registry_path:
+            try:
+                subprocess.Popen([registry_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                time.sleep(1.0)
+                _remember_path(cache_key, registry_path)
+                return True
+            except Exception as e:
+                print(f"[open_app] Registry-resolved path failed: {e}")
 
     if ":" in app_name:
         try:
@@ -99,6 +218,20 @@ def _launch_windows(app_name: str) -> bool:
             return True
         except Exception:
             pass
+
+    # Store/UWP apps and any other Start Menu entry (WhatsApp, Spotify…) —
+    # the last resolvable step before falling back to typing a search query.
+    aumid = _lookup_start_apps(app_name)
+    if aumid:
+        target = f"{_APPS_FOLDER_PREFIX}{aumid}"
+        try:
+            _launch_target(target)
+            time.sleep(1.5)
+            if cache_key:
+                _remember_path(cache_key, target)
+            return True
+        except Exception as e:
+            print(f"[open_app] Start Menu AppID launch failed: {e}")
 
     try:
         import pyautogui
@@ -116,7 +249,8 @@ def _launch_windows(app_name: str) -> bool:
     return False
 
 
-def _launch_macos(app_name: str) -> bool:
+def _launch_macos(app_name: str, cache_key: str | None = None) -> bool:
+    # cache_key: unused here — path caching is Windows-only for now.
 
     try:
         result = subprocess.run(
@@ -173,7 +307,8 @@ _LINUX_TERMINAL_FALLBACKS = [
     "xterm", "lxterminal", "mate-terminal", "tilix", "alacritty", "kitty",
 ]
 
-def _launch_linux(app_name: str) -> bool:
+def _launch_linux(app_name: str, cache_key: str | None = None) -> bool:
+    # cache_key: unused here — path caching is Windows-only for now.
 
     # terminal emulators: try common ones in order
     if app_name in ("x-terminal-emulator", "gnome-terminal", "terminal"):
@@ -253,16 +388,17 @@ def open_app(
         return f"Unsupported operating system: {_SYSTEM}"
 
     normalized = _normalize(app_name)
+    cache_key  = normalized.lower()
     print(f"[open_app] Launching: '{app_name}' → '{normalized}' ({_SYSTEM})")
 
     if player:
         player.write_log(f"[open_app] {app_name}")
 
     try:
-        if launcher(normalized):
+        if launcher(normalized, cache_key):
             return f"Opened {app_name}."
         if normalized.lower() != app_name.lower():
-            if launcher(app_name):
+            if launcher(app_name, cache_key):
                 return f"Opened {app_name}."
         return (
             f"Could not confirm that {app_name} launched. "

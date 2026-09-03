@@ -50,6 +50,7 @@ from actions.flight_finder     import flight_finder
 from actions.open_app          import open_app
 from actions.weather_report    import weather_action
 from actions.send_message      import send_message
+from actions.whatsapp_voice    import whatsapp_voice
 from actions.reminder          import reminder
 from actions.computer_settings import computer_settings
 from actions.screen_processor  import _capture_camera, _capture_screen
@@ -69,8 +70,12 @@ from actions.background_monitor import (
 )
 from actions.web_search        import _news as _fetch_news_sync
 from actions.web_search        import _tr_news_rss
-from memory.config_manager     import get_brief_enabled
+from memory.config_manager     import get_brief_enabled, get_audio_device
 from core.plugin_loader        import discover_plugins
+from core.mcp_client           import MCPToolClient
+from core                      import undo as undo_stack
+from core                      import confirm as confirm_gate
+from core                      import audio_devices
 
 def get_base_dir():
     if getattr(sys, "frozen", False):
@@ -142,7 +147,7 @@ _MIC_PCM_BUFFER_BYTES = SEND_SAMPLE_RATE * 2 * 8  # 8s of int16 mono mic audio �
 # destructive file ops, shutting the PC/JARVIS down) and therefore require the
 # CURRENT speaker's voice to match the enrolled owner before running. Plugins
 # opt into the same check by setting PLUGIN["sensitive"] = True.
-_SENSITIVE_CORE_TOOLS = {"shutdown_jarvis", "send_message"}
+_SENSITIVE_CORE_TOOLS = {"shutdown_jarvis", "send_message", "whatsapp_voice"}
 _DANGEROUS_SETTINGS_RE = re.compile(
     r"shutdown|restart|reboot|lock[_ ]?screen|toggle[_ ]?wifi|"
     r"kapat|yeniden ba[şs]lat|kilit|wifi",
@@ -307,15 +312,48 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "send_message",
-        "description": "Sends a text message via WhatsApp, Telegram, or other messaging platform.",
+        "description": (
+            "Sends a TEXT message via WhatsApp, Telegram, or other messaging platform. "
+            "Only call this once the user has said WHAT to write. If they named a recipient "
+            "but not the content, ask them what to write instead of calling this tool — "
+            "never call it with the user's own instruction as the message."
+        ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
                 "receiver":     {"type": "STRING", "description": "Recipient contact name"},
-                "message_text": {"type": "STRING", "description": "The message to send"},
+                "message_text": {"type": "STRING", "description": (
+                    "ONLY the words the recipient should read. Never the user's command to you "
+                    "(e.g. 'WhatsApp'ta Malik'e mesaj at' is an instruction, not a message)."
+                )},
                 "platform":     {"type": "STRING", "description": "Platform: WhatsApp, Telegram, etc."}
             },
             "required": ["receiver", "message_text", "platform"]
+        }
+    },
+    {
+        "name": "whatsapp_voice",
+        "description": (
+            "Sends a WhatsApp VOICE message (a spoken voice note) in your own voice. "
+            "Use this when the user asks to send a voice message / sesli mesaj — "
+            "NOT send_message, which sends typed text. "
+            "The chat that opens is verified against the requested contact before "
+            "anything is recorded, so an ambiguous name is refused rather than "
+            "delivered to the wrong person. "
+            "Use action='login' the first time, so the user can scan the WhatsApp Web QR code."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action":       {"type": "STRING", "description": "send (default) | login"},
+                "receiver":     {"type": "STRING", "description": "Exact WhatsApp contact name"},
+                "message_text": {"type": "STRING", "description": (
+                    "ONLY the words to be spoken to the recipient, in the user's language. "
+                    "Never the user's command to you (e.g. 'sesli mesaj at' is an instruction, "
+                    "not content). If the user did not say what to say, ask first."
+                )},
+            },
+            "required": []
         }
     },
     {
@@ -766,6 +804,28 @@ TOOL_DECLARATIONS = [
             "required": ["image_url", "question"]
         }
     },
+    {
+        "name": "undo",
+        "description": (
+            "Reverses the last reversible change JARVIS made — volume, brightness, "
+            "dark mode, WiFi toggle, and similar settings changes. "
+            "Call this whenever the user says undo, revert, take it back, put it "
+            "back the way it was, geri al, eski haline getir. "
+            "Use action='list' when they ask what can be undone. "
+            "This does NOT undo typing/edits inside another application on screen "
+            "(that is computer_settings with action 'undo', i.e. Ctrl+Z)."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "undo (default) — reverse the last change | list — show what can be undone",
+                },
+            },
+            "required": []
+        }
+    },
 ]
 
 class JarvisLive:
@@ -814,6 +874,11 @@ class JarvisLive:
             logger=lambda msg: (print(f"[Plugins] {msg}"), self.ui.write_log(f"SYS: {msg}")),
         )
         self.ui.get_plugins = self._plugin_registry.list_for_ui
+        # Real MCP client — connects to the servers declared in JARVIS/.mcp.json
+        # (started later from run(), once the asyncio event loop exists).
+        self._mcp_client = MCPToolClient(
+            logger=lambda msg: (print(f"[MCP] {msg}"), self.ui.write_log(f"SYS: {msg}")),
+        )
         self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
 
         # Exposed so the orchestrator plugin can dispatch to sibling plugins
@@ -977,7 +1042,11 @@ class JarvisLive:
             output_audio_transcription={},
             input_audio_transcription={},
             system_instruction="\n".join(parts),
-            tools=[{"function_declarations": TOOL_DECLARATIONS + self._plugin_registry.get_tool_declarations()}],
+            tools=[{"function_declarations": (
+                TOOL_DECLARATIONS
+                + self._plugin_registry.get_tool_declarations()
+                + self._mcp_client.get_tool_declarations()
+            )}],
             session_resumption=types.SessionResumptionConfig(),
             # Sliding-window compression: session never dies from a full context
             # window — JARVIS can stay in one conversation for hours
@@ -1079,6 +1148,10 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None))
                 result = r or f"Message sent to {args.get('receiver')}."
 
+            elif name == "whatsapp_voice":
+                r = await loop.run_in_executor(None, lambda: whatsapp_voice(parameters=args, player=self.ui))
+                result = r or "Done."
+
             elif name == "reminder":
                 r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
                 result = r or "Reminder set."
@@ -1121,6 +1194,15 @@ class JarvisLive:
             elif name == "close_camera":
                 self.ui.stop_camera_stream()
                 result = "Camera closed."
+
+            elif name == "undo":
+                if str(args.get("action", "undo")).lower().strip() == "list":
+                    items = undo_stack.history()
+                    result = ("Things I can undo, most recent first:\n"
+                              + "\n".join(f"- {i}" for i in items)
+                              ) if items else "I have not changed anything I can undo yet."
+                else:
+                    result = await loop.run_in_executor(None, undo_stack.undo_last)
 
             elif name == "computer_settings":
                 r = await loop.run_in_executor(None, lambda: computer_settings(parameters=args, response=None, player=self.ui))
@@ -1209,6 +1291,8 @@ class JarvisLive:
                         lambda: self._plugin_registry.run(name, args, player=self.ui, session_memory=None)
                     )
                     result = r or "Done."
+                elif self._mcp_client.has(name):
+                    result = await self._mcp_client.call(name, args)
                 else:
                     result = f"Unknown tool: {name}"
 
@@ -1291,6 +1375,7 @@ class JarvisLive:
                 channels=CHANNELS,
                 dtype="int16",
                 blocksize=CHUNK_SIZE,
+                device=audio_devices.resolve(get_audio_device("input"), "input"),
                 callback=callback,
             ):
                 print("[JARVIS] 🎤 Mic stream open")
@@ -1434,6 +1519,7 @@ class JarvisLive:
             channels=CHANNELS,
             dtype="int16",
             blocksize=CHUNK_SIZE,
+            device=audio_devices.resolve(get_audio_device("output"), "output"),
         )
         stream.start()
 
@@ -1758,6 +1844,36 @@ class JarvisLive:
                 self.ui.write_log("SYS: Yanıt gelmedi — bağlantı yenileniyor.")
                 raise RuntimeError(f"watchdog: no response {since_speech:.0f}s after user spoke")
 
+    # ── Trading bot monitor ──────────────────────────────────────────────────────
+
+    async def _run_trading_monitor(self) -> None:
+        """Arka plan gorevi: Kripto/Borsa botlarinin cokme uyarisi (aninda) ve
+        periyodik K/Z ozeti (Telegram uzerinden) - aktif sesli oturum gerektirmez."""
+        from plugins.trading_bots import monitor_snapshot
+        was_running: dict[str, bool] = {}
+        tick = 0
+        CHECK_INTERVAL = 900   # 15 dk
+        DIGEST_EVERY = 16      # 16 * 15dk = ~4 saatte bir ozet
+        while True:
+            await asyncio.sleep(CHECK_INTERVAL)
+            tick += 1
+            if not self._telegram:
+                continue
+            try:
+                snapshot = await asyncio.to_thread(monitor_snapshot)
+            except Exception as e:
+                print(f"[TradingMonitor] ⚠️ {e}")
+                continue
+
+            for key, info in snapshot.items():
+                if was_running.get(key) and not info["running"]:
+                    await self._telegram.send(f"⚠️ {key} botu duruyor — çökmüş olabilir, kontrol et.")
+                was_running[key] = info["running"]
+
+            if tick % DIGEST_EVERY == 0:
+                digest = "\n".join(info["report"] for info in snapshot.values())
+                await self._telegram.send(f"📊 Bot durum özeti:\n{digest}")
+
     # ── Phone audio relay ────────────────────────────────────────────────────────
 
     async def _relay_phone_audio(self) -> None:
@@ -1817,6 +1933,14 @@ class JarvisLive:
 
     async def run(self):
         self._loop = asyncio.get_event_loop()
+
+        # Connect every MCP server declared in JARVIS/.mcp.json once, for the
+        # process lifetime (mirrors the dashboard/Telegram bridge below — not
+        # re-run on Gemini reconnects inside the while-loop further down).
+        try:
+            await self._mcp_client.start()
+        except Exception as e:
+            print(f"[MCP] Client startup failed: {e}")
 
         # Start dashboard (optional — needs: pip install fastapi "uvicorn[standard]" cryptography)
         try:
@@ -1917,6 +2041,7 @@ class JarvisLive:
                         tg.create_task(self._run_background_monitor())
                         tg.create_task(self._run_proactive_mode())
                         tg.create_task(self._run_watchdog())
+                        tg.create_task(self._run_trading_monitor())
                         if self._dashboard:
                             tg.create_task(self._relay_phone_audio())
 
@@ -2021,6 +2146,13 @@ class JarvisLive:
 
 def main():
     ui = JarvisUI("face.png")
+
+    # Warm the mic/speaker device list on a background thread, and wire the
+    # on-screen confirmation gate for irreversible computer_settings actions
+    # (restart/shutdown) — see core/audio_devices.py and core/confirm.py.
+    audio_devices.configure(SEND_SAMPLE_RATE, RECEIVE_SAMPLE_RATE)
+    audio_devices.prefetch()
+    confirm_gate.bind(show=ui.show_confirm, hide=ui.hide_confirm, log=ui.write_log)
 
     def runner():
         ui.wait_for_api_key()

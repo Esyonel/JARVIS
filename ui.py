@@ -1935,6 +1935,89 @@ class RemoteKeyOverlay(QWidget):
         self.closed.emit()
 
 
+class ConfirmBanner(QWidget):
+    """On-screen CONFIRM/CANCEL gate for irreversible actions (restart,
+    shutdown, ...). The old gate was a tool parameter the model filled in
+    itself, so it could confirm its own shutdown request. This is the
+    interface asking, and the answer travels from a human click to
+    core/confirm.py without the model ever being able to forge it."""
+
+    answered = pyqtSignal(bool)   # True = CONFIRM, False = CANCEL
+
+    _OW, _OH = 380, 160
+
+    def __init__(self, title: str, detail: str, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            ConfirmBanner {{
+                background: rgba(20, 4, 4, 0.96);
+                border: 1px solid {C.RED};
+                border-radius: 14px;
+            }}
+        """)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 16, 20, 16)
+        lay.setSpacing(8)
+
+        hdr = QLabel("⚠  ONAY GEREKİYOR")
+        hdr.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hdr.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
+        hdr.setStyleSheet(f"color: {C.RED}; background: transparent;")
+        lay.addWidget(hdr)
+
+        title_lbl = QLabel(title)
+        title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_lbl.setWordWrap(True)
+        title_lbl.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
+        title_lbl.setStyleSheet(f"color: {C.WHITE}; background: transparent;")
+        lay.addWidget(title_lbl)
+
+        if detail:
+            detail_lbl = QLabel(detail)
+            detail_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            detail_lbl.setWordWrap(True)
+            detail_lbl.setFont(QFont("Courier New", 8))
+            detail_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+            lay.addWidget(detail_lbl)
+
+        btn_row = QHBoxLayout(); btn_row.setSpacing(8)
+
+        yes = QPushButton("▸  ONAYLA")
+        yes.setFixedHeight(34)
+        yes.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        yes.setCursor(Qt.CursorShape.PointingHandCursor)
+        yes.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(255,51,85,0.12); color: {C.RED};
+                border: 1px solid {C.RED}; border-radius: 5px;
+            }}
+            QPushButton:hover {{ background: rgba(255,51,85,0.22); }}
+        """)
+        yes.clicked.connect(lambda: self._answer(True))
+        btn_row.addWidget(yes)
+
+        no = QPushButton("İPTAL")
+        no.setFixedHeight(34)
+        no.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        no.setCursor(Qt.CursorShape.PointingHandCursor)
+        no.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {C.TEXT_MED};
+                border: 1px solid {C.BORDER}; border-radius: 5px;
+            }}
+            QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}
+        """)
+        no.clicked.connect(lambda: self._answer(False))
+        btn_row.addWidget(no)
+
+        lay.addLayout(btn_row)
+
+    def _answer(self, accepted: bool):
+        self.answered.emit(accepted)
+
+
 class MainWindow(QMainWindow):
     _log_sig        = pyqtSignal(str)
     _state_sig      = pyqtSignal(str)
@@ -1951,6 +2034,8 @@ class MainWindow(QMainWindow):
     _ticker_news_sig  = pyqtSignal(list)     # news ticker items (thread-safe)
     _mic_level_sig    = pyqtSignal(float)    # live mic input level 0-100 (thread-safe)
     _tension_sig      = pyqtSignal(float, str)  # acoustic arousal 0-100 + label
+    _confirm_sig      = pyqtSignal(str, str)    # (title, detail) — irreversible-action gate
+    _confirm_hide_sig = pyqtSignal()
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -1985,6 +2070,7 @@ class MainWindow(QMainWindow):
         self._current_file: str | None = None
         self._remote_overlay: RemoteKeyOverlay | None = None
         self._customize_overlay: CustomizeOverlay | None = None
+        self._confirm_overlay: ConfirmBanner | None = None   # live confirm banner, if one is on screen
 
         central = QWidget()
         central.setStyleSheet(f"background: {C.BG};")
@@ -2190,6 +2276,8 @@ class MainWindow(QMainWindow):
         self._state_sig.connect(self._apply_state)
         self._content_sig.connect(self._show_content)
         self._reconfig_sig.connect(self._show_setup)
+        self._confirm_sig.connect(self._show_confirm_banner)
+        self._confirm_hide_sig.connect(self._hide_confirm_banner)
         self._camera_sig.connect(self._show_camera_frame)
         self._cam_stream_sig.connect(self._on_cam_stream)
         self._cam_frame_sig.connect(self._on_cam_frame)
@@ -2705,6 +2793,13 @@ class MainWindow(QMainWindow):
         if self._customize_overlay and self._customize_overlay.isVisible():
             ow, oh = CustomizeOverlay._OW, CustomizeOverlay._OH
             self._customize_overlay.setGeometry(
+                (cw.width()  - ow) // 2,
+                (cw.height() - oh) // 2,
+                ow, oh,
+            )
+        if self._confirm_overlay and self._confirm_overlay.isVisible():
+            ow, oh = ConfirmBanner._OW, ConfirmBanner._OH
+            self._confirm_overlay.setGeometry(
                 (cw.width()  - ow) // 2,
                 (cw.height() - oh) // 2,
                 ow, oh,
@@ -3244,6 +3339,37 @@ class MainWindow(QMainWindow):
         self._content_panel.show()
         total = self._center_split.height()
         self._center_split.setSizes([max(total - 360, 120), 360])
+
+    # ── Irreversible-action confirmation ─────────────────────────────────────
+
+    def _show_confirm_banner(self, title: str, detail: str):
+        self._hide_confirm_banner()
+        ov = ConfirmBanner(title, detail, parent=self.centralWidget())
+        ov.answered.connect(self._on_confirm_answered)
+        cw = self.centralWidget()
+        ow, oh = ConfirmBanner._OW, ConfirmBanner._OH
+        ov.setGeometry((cw.width() - ow) // 2, (cw.height() - oh) // 2, ow, oh)
+        ov.show()
+        ov.raise_()
+        self._confirm_overlay = ov
+
+    def _hide_confirm_banner(self):
+        ov = self._confirm_overlay
+        if ov is not None:
+            ov.hide()
+            ov.deleteLater()
+            self._confirm_overlay = None
+
+    def _on_confirm_answered(self, accepted: bool):
+        # Tear the banner down first: core.confirm.resolve() may run the
+        # stored action immediately (e.g. shutdown), and the banner must not
+        # be left dangling on screen while that happens.
+        self._hide_confirm_banner()
+        try:
+            from core.confirm import resolve
+            resolve(accepted)
+        except Exception as e:
+            self._log.append_log(f"ERR: Confirmation failed — {e}")
 
     def _build_api_panel(self) -> QWidget:
         """Which AI provider is in use and roughly how much of its daily
@@ -3901,6 +4027,15 @@ class JarvisUI:
         """Thread-safe: show the API key setup overlay (e.g. after an auth error)."""
         self._win._ready = False
         self._win._reconfig_sig.emit()
+
+    def show_confirm(self, title: str, detail: str) -> None:
+        """Thread-safe: put a CONFIRM/CANCEL banner on screen for an
+        irreversible action. Bound to core/confirm.py at startup."""
+        self._win._confirm_sig.emit(str(title)[:120], str(detail)[:300])
+
+    def hide_confirm(self) -> None:
+        """Thread-safe: tear down the confirmation banner, if one is showing."""
+        self._win._confirm_hide_sig.emit()
 
     def show_camera_frame(self, img_bytes: bytes):
         """Thread-safe: show a webcam frame in the small overlay (screen captures)."""

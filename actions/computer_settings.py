@@ -7,6 +7,9 @@ import subprocess
 import platform
 from pathlib import Path
 
+from core.confirm import request as _confirm_request
+from core.undo import push_undo as _push_undo
+
 try:
     import pyautogui
     pyautogui.FAILSAFE = True
@@ -584,6 +587,23 @@ ACTION_MAP: dict[str, callable] = {
 
 _DANGEROUS_ACTIONS = {"restart", "shutdown"}
 
+# Actions that can be reversed immediately, and how to reverse them. The
+# reversal is approximate (e.g. "undo brightness_up" is "brightness_down"),
+# not an exact state restore — see core/undo.py's own reasoning: acting at
+# once and letting the user say "undo" beats asking "are you sure?" before
+# every reversible change.
+_UNDOABLE: dict[str, tuple[str, callable]] = {
+    "volume_up":       ("volume increased", volume_down),
+    "volume_down":     ("volume decreased", volume_up),
+    "mute":            ("mute toggled",     volume_mute),
+    "unmute":          ("mute toggled",     volume_mute),
+    "toggle_mute":     ("mute toggled",     volume_mute),
+    "brightness_up":   ("brightness increased", brightness_down),
+    "brightness_down": ("brightness decreased", brightness_up),
+    "dark_mode":       ("dark mode toggled", dark_mode),
+    "toggle_wifi":     ("WiFi toggled",      toggle_wifi),
+}
+
 
 
 def _detect_action(description: str) -> dict:
@@ -650,12 +670,21 @@ def computer_settings(
         player.write_log(f"[Settings] {action}")
 
     if action in _DANGEROUS_ACTIONS:
-        confirmed = str(params.get("confirmed", "")).lower()
-        if confirmed not in ("yes", "true", "1", "confirm"):
-            return (
-                f"This will {action} the computer. "
-                f"Please confirm by calling again with confirmed=yes."
-            )
+        # The confirmation token is issued by the UI, never by the model —
+        # see core/confirm.py. The old "confirmed=yes" parameter was filled
+        # in by the model itself, so it could confirm its own shutdown.
+        func = ACTION_MAP[action]
+
+        def _run(_func=func, _action=action) -> str:
+            _func()
+            return f"{_action.capitalize()} initiated."
+
+        return _confirm_request(
+            key=f"computer_settings:{action}",
+            title=f"{action.upper()} THE COMPUTER",
+            detail="This will happen in ~10 seconds unless cancelled.",
+            run=_run,
+        )
 
     if action == "volume_set":
         try:
@@ -700,6 +729,9 @@ def computer_settings(
 
     try:
         func()
+        if action in _UNDOABLE:
+            label, undo_fn = _UNDOABLE[action]
+            _push_undo(label, lambda fn=undo_fn, a=action: (fn(), f"{a} reversed.")[1])
         return f"Done: {action}."
     except Exception as e:
         print(f"[Settings] Action failed ({action}): {e}")

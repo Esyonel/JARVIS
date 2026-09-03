@@ -32,6 +32,13 @@
         "-y",
         "@modelcontextprotocol/server-brave-search"
       ]
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ]
     }
   }
 }

@@ -8,6 +8,10 @@ requests
 beautifulsoup4
 duckduckgo-search
 playwright
+
+# Model Context Protocol (MCP) client — connects JARVIS's own runtime to the
+# stdio servers declared in .mcp.json (see core/mcp_client.py)
+mcp
 pyautogui
 pyperclip
 pygetwindow

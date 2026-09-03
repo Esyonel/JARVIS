@@ -33,6 +33,27 @@ def _get_os() -> str:
         return "windows"
 
 
+# The assistant's own name in the message body proves the text was addressed to
+# JARVIS, not to the contact. Turkish STT regularly mis-hears "JARVIS" as
+# "servis"/"cervis", which is exactly how a spoken command ends up being sent
+# verbatim as the message ("servis WhatsApp'ta Malik kısmına mesaj at").
+_ASSISTANT_NAMES = ("jarvis", "servis", "cervis", "carvis", "carvıs", "servıs")
+_SEND_VERBS = (
+    "mesaj at", "mesaj gönder", "mesaj gonder", "mesaj yaz", "mesaj ilet",
+    "sesli mesaj", "send a message", "send message", "message to",
+)
+
+
+def looks_like_command_to_jarvis(text: str) -> bool:
+    """True when `text` is the user's instruction to JARVIS rather than content
+    meant for the recipient. Deliberately narrow: BOTH the assistant's name and
+    a send-verb must appear, so a normal message that merely says "mesaj at"
+    is still delivered."""
+    low = (text or "").casefold()
+    return (any(n in low for n in _ASSISTANT_NAMES)
+            and any(v in low for v in _SEND_VERBS))
+
+
 def _require_pyautogui():
     if not _PYAUTOGUI:
         raise RuntimeError("PyAutoGUI not installed. Run: pip install pyautogui")
@@ -69,6 +90,19 @@ def _open_app(app_name: str) -> bool:
 
     try:
         if os_name == "windows":
+            # Reuse actions/open_app.py's resolver: cached path → PATH → App Paths
+            # registry → Start Menu AppID. Typing into the search box (below) is
+            # only the last resort, and picking the wrong search hit here would
+            # mean messaging the wrong contact.
+            try:
+                from actions.open_app import open_app as _resolve_open
+                result = _resolve_open(parameters={"app_name": app_name})
+                if result.lower().startswith("opened"):
+                    time.sleep(2.0)
+                    return True
+            except Exception as e:
+                print(f"[SendMessage] open_app resolver unavailable: {e}")
+
             pyautogui.press("win")
             time.sleep(0.5)
             _paste_text(app_name)
@@ -150,7 +184,20 @@ def _desktop_send(app_name: str, receiver: str, message: str) -> str:
     return f"Message sent to {receiver} via {app_name}."
 
 def _send_whatsapp(receiver: str, message: str) -> str:
-    return _desktop_send("WhatsApp", receiver, message)
+    """WhatsApp goes through WhatsApp Web rather than the desktop app: that path
+    runs in the background, verifies the recipient before typing anything, and
+    waits for WhatsApp's own delivery confirmation. The pyautogui fallback below
+    can silently deliver to the wrong contact, so it is only a last resort."""
+    try:
+        from actions.whatsapp_voice import send_whatsapp_text
+        result = send_whatsapp_text(receiver, message)
+    except Exception as e:
+        print(f"[SendMessage] WhatsApp Web path unavailable ({e}) — using desktop app.")
+        return _desktop_send("WhatsApp", receiver, message)
+
+    if result.startswith("WhatsApp Web is not logged in"):
+        return _desktop_send("WhatsApp", receiver, message)
+    return result
 
 def _send_telegram(receiver: str, message: str) -> str:
     return _desktop_send("Telegram", receiver, message)
@@ -245,6 +292,10 @@ def send_message(
         return "Please specify a recipient."
     if not message_text:
         return "Please specify the message content."
+    if looks_like_command_to_jarvis(message_text):
+        return ("Refused: that text is the user's instruction to me, not the message body. "
+                "Nothing was sent. Ask the user what they actually want written, "
+                "then call this tool again with only those words.")
     if not _PYAUTOGUI:
         return "PyAutoGUI is not installed — cannot control the desktop."
 
