@@ -10,6 +10,7 @@ jarvis.log
 uploads/
 *.log
 jarvis.lock
+sessiz_dinleme.lock
 android-remote/build/
 .claude/
 generated_models/
