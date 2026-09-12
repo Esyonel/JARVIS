@@ -20,6 +20,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from config import get_config
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 PLUGIN = {
@@ -56,12 +58,7 @@ _SCAN_CORE         = (255, 235, 130)   # bright core line (BGR)
 # ── config helpers (same pattern as actions/web_search.py) ──────────────────
 
 def _config() -> dict:
-    try:
-        return json.loads(
-            (BASE_DIR / "config" / "api_keys.json").read_text(encoding="utf-8")
-        )
-    except Exception:
-        return {}
+    return get_config()
 
 
 def _open_camera():

@@ -44,6 +44,13 @@ torch
 librosa
 scipy
 
+# Yerel Uyandırma Kelimesi ("Hey Jarvis") — core/wake_word.py
+openwakeword
+onnxruntime
+
+# Yerel/cevrimdisi konusma desifresi (kota gerektirmez) — sessiz_dinleme.py
+faster-whisper
+
 # Panniantong/agent-reach — internet_reach plugin. NOTE: the "agent-reach" name on
 # PyPI belongs to an unrelated project, so this is pinned straight to the real repo.
 git+https://github.com/Panniantong/agent-reach.git@main

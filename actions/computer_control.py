@@ -29,6 +29,8 @@ try:
 except ImportError:
     _PYPERCLIP = False
 
+from config import get_config
+
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
@@ -36,14 +38,10 @@ def _base_dir() -> Path:
 
 
 _BASE         = _base_dir()
-_CONFIG_PATH  = _BASE / "config" / "api_keys.json"
 _MEMORY_PATH  = _BASE / "memory" / "long_term.json"
 
 def _load_config() -> dict:
-    try:
-        return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return get_config()
 
 def _platform_os() -> str:
     return {"Windows": "windows", "Darwin": "mac", "Linux": "linux"}.get(

@@ -36,6 +36,8 @@ except ImportError:
 from google import genai
 from google.genai import types as gtypes
 
+from config import get_config
+
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
@@ -47,10 +49,7 @@ _CONFIG_PATH = _BASE / "config" / "api_keys.json"
 
 
 def _load_config() -> dict:
-    try:
-        return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return get_config()
 
 
 def _save_config_key(key: str, value) -> None:

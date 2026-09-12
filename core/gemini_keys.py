@@ -18,22 +18,17 @@ Config (config/api_keys.json) accepts either form:
 Both may be present; the single key is used first, then the list.
 """
 
-import json
 import threading
 from datetime import date
-from pathlib import Path
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "api_keys.json"
+from config import get_config
 
 _lock = threading.Lock()
 _spent: dict[str, date] = {}   # key -> date it was found exhausted
 
 
 def _config() -> dict:
-    try:
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return get_config()
 
 
 def all_keys() -> list[str]:

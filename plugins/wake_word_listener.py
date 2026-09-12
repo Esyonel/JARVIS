@@ -28,13 +28,23 @@ def run(parameters: Dict[str, Any], player=None, session_memory=None) -> str:
     action = str(parameters.get("action", "status")).strip()
 
     if action == "start":
-        wake_detector.start()
-        return "🎙️ 'Hey Jarvis' uyandırma kelimesi dinleyicisi aktif edildi. Artık 'Hey Jarvis' diyerek asistanı uyandırabilirsiniz."
+        if wake_detector.is_running:
+            return "🎙️ 'Hey Jarvis' dinleyicisi zaten aktif."
+        ok = wake_detector.start()
+        if not ok:
+            return f"❌ Uyandırma kelimesi başlatılamadı: {wake_detector.load_error}"
+        return ("🎙️ 'Hey Jarvis' uyandırma kelimesi dinleyicisi aktif edildi. "
+                "Mikrofon kapalıyken 'Hey Jarvis' diyerek onu otomatik açabilirsiniz.")
     elif action == "stop":
         wake_detector.stop()
         return "🛑 Uyandırma dinleyicisi durduruldu."
     elif action == "status":
-        st = "Aktif" if wake_detector.is_running else "Kapalı"
+        if wake_detector.is_running:
+            st = "Aktif (mikrofon kapalıyken dinliyor)"
+        elif wake_detector.load_error:
+            st = f"Kapalı — {wake_detector.load_error}"
+        else:
+            st = "Kapalı"
         return f"Uyandırma Kelimesi Durumu: {st}"
 
     return f"Bilinmeyen eylem: {action}"

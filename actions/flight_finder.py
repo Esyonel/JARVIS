@@ -6,7 +6,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from config import is_windows, is_mac, is_linux
+from config import get_config, is_windows, is_mac, is_linux
 
 def _looks_like_flight_results(text: str) -> bool:
     """True only if the page actually shows flight data.
@@ -39,12 +39,10 @@ def _get_base_dir() -> Path:
 
 
 BASE_DIR        = _get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    return get_config()["gemini_api_key"]
 
 _MONTH_MAP: dict[str, int] = {
 

@@ -27,8 +27,7 @@ from pathlib import Path
 
 import requests
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
+from config import get_config
 
 _TIMEOUT = 60
 
@@ -69,10 +68,7 @@ def _ordered_providers(task: str) -> list[tuple[str, str, str]]:
 
 
 def _config() -> dict:
-    try:
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return get_config()
 
 
 def _is_transient(error: Exception) -> bool:

@@ -25,10 +25,10 @@ import tempfile
 from pathlib import Path
 from datetime import datetime
 
+from config import get_config
+
 def _get_api_key() -> str:
-    config_path = Path(__file__).resolve().parent.parent / "config" / "api_keys.json"
-    with open(config_path, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    return get_config()["gemini_api_key"]
 
 
 def _gemini_client():

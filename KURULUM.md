@@ -103,7 +103,7 @@ graph TD
 * **İletişim ve Mesajlaşma:** `whatsapp_reader`, `whatsapp_backup`, `telegram_notify`, `calendar_manager`.
 * **Medya ve Donanım:** `binaural_audio`, `visual_editing`, `background_removal`, `printer_control`, `scanner_control`.
 * **Kendi Kendini Geliştirme (Self-Improvement):** `self_evolution.py`, `self_improve.py`, `self_improvement_program.py`, `trend_based_roadmap.py`, `internet_research_self_improve.py`, `codebase_intelligence.py`.
-* **Doğrulama ve Test:** `app_launch_verifier`, `app_verification`, `app_verification_ocr`, `app_verification_screenshot`, `app_website_verifier`.
+* **Doğrulama ve Test:** `app_launch_verifier`, `app_website_verifier`.
 
 ---
 
@@ -397,4 +397,22 @@ JARVIS'e eklenen yeni nesil yetenekler ve eklentiler:
 - **Kurulum Komutu:**
 ```powershell
 pip install pip
+```
+
+
+### 📦 Yeni Eklenen Bileşen: Python: pdfminer.six
+- **Tür:** Python Kütüphanesi
+- **Açıklama:** JARVIS tarafından otonom kurulan pdfminer.six paketi.
+- **Kurulum Komutu:**
+```powershell
+pip install pdfminer.six
+```
+
+
+### 📦 Yeni Eklenen Bileşen: Python: reportlab
+- **Tür:** Python Kütüphanesi
+- **Açıklama:** JARVIS tarafından otonom kurulan reportlab paketi.
+- **Kurulum Komutu:**
+```powershell
+pip install reportlab
 ```

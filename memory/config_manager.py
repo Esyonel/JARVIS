@@ -2,6 +2,8 @@ import json
 import sys
 from pathlib import Path
 
+from config import get_config
+
 def get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
@@ -35,13 +37,7 @@ def save_api_keys(gemini_api_key: str) -> None:
     )
 
 def load_api_keys() -> dict:
-    if not CONFIG_FILE.exists():
-        return {}
-    try:
-        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-    except Exception as e:
-        print(f"❌ Failed to load api_keys.json: {e}")
-        return {}
+    return get_config()
 
 def get_gemini_key() -> str | None:
     return load_api_keys().get("gemini_api_key")
@@ -107,6 +103,33 @@ def save_audio_device(kind: str, name: str) -> None:
             data = {}
     data[f"{kind}_device"] = (name or "").strip()
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
+
+def get_wake_word_enabled() -> bool:
+    return load_api_keys().get("wake_word_enabled", True)
+
+
+def save_wake_word_enabled(enabled: bool) -> None:
+    ensure_config_dir()
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data["wake_word_enabled"] = enabled
+    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
+
+def get_auto_sleep_enabled() -> bool:
+    return load_api_keys().get("auto_sleep_enabled", True)
+
+
+def get_auto_sleep_minutes() -> float:
+    try:
+        return float(load_api_keys().get("auto_sleep_minutes", 2))
+    except (TypeError, ValueError):
+        return 2.0
 
 
 def get_plugin_enabled(plugin_name: str) -> bool:

@@ -29,7 +29,7 @@ from PyQt6.QtGui import (
     QPainterPath, QPen, QPixmap, QRadialGradient, QShortcut,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSplitter,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QProgressBar,
 )
@@ -41,6 +41,8 @@ try:
     _WEBENGINE = True
 except ImportError:
     _WEBENGINE = False
+
+from config import get_config
 
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -54,10 +56,7 @@ API_FILE   = CONFIG_DIR / "api_keys.json"
 
 def _read_full_config() -> dict:
     """Read api_keys.json config dict. Returns {} on any error."""
-    try:
-        return json.loads(API_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return get_config()
 
 
 _DEFAULT_W, _DEFAULT_H = 980, 700
@@ -1515,7 +1514,7 @@ class PluginManagerOverlay(QWidget):
 
     _OW = 420
 
-    def __init__(self, plugins: list[dict], parent=None):
+    def __init__(self, plugins: list[dict], parent=None, max_height: int = 520):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"""
@@ -1545,8 +1544,32 @@ class PluginManagerOverlay(QWidget):
             empty.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
             lay.addWidget(empty)
 
+        # 70+ plugins easily overflow the window — without a scroll area the
+        # CLOSE button (and everything past the fold) fell outside the
+        # visible area with no way to reach it. Header and CLOSE stay fixed;
+        # only the plugin list scrolls.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet(f"""
+            QScrollArea {{ background: transparent; border: none; }}
+            QScrollBar:vertical {{ background: {C.BG}; width: 8px; border: none; }}
+            QScrollBar::handle:vertical {{ background: {C.BORDER_B}; border-radius: 4px; min-height: 24px; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; border: none; }}
+        """)
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        inner_lay = QVBoxLayout(inner)
+        inner_lay.setContentsMargins(0, 0, 4, 0)
+        inner_lay.setSpacing(6)
         for p in plugins:
-            lay.addLayout(self._build_row(p))
+            inner_lay.addLayout(self._build_row(p))
+        inner_lay.addStretch()
+        scroll.setWidget(inner)
+        # Header + separator + CLOSE button need roughly this much room —
+        # whatever's left of max_height goes to the scroll area.
+        scroll.setMaximumHeight(max(160, max_height - 130))
+        lay.addWidget(scroll, stretch=1)
 
         lay.addSpacing(4)
         close_btn = QPushButton("KAPAT")
@@ -1619,6 +1642,136 @@ class PluginManagerOverlay(QWidget):
         new_val = not get_plugin_enabled(name)
         save_plugin_enabled(name, new_val)
         self._style_toggle(btn, new_val)
+
+
+class AudioDeviceOverlay(QWidget):
+    """Floating overlay — pick which microphone and which speakers JARVIS
+    uses. Backed entirely by core/audio_devices.py, which already does the
+    hard part (deduplicating sounddevice's per-host-API duplicates, probing
+    which endpoint actually moves audio); this widget just lists what it
+    returns and saves the choice.
+
+    Takes effect on the next session reconnect (the mic/speaker streams in
+    main.py are opened once per Live session, not re-opened on a config
+    write) — the overlay says so rather than pretending it's instant."""
+
+    saved = pyqtSignal()
+    _OW, _OH = 380, 260
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            AudioDeviceOverlay {{
+                background: rgba(0, 6, 10, 245);
+                border: 1px solid {C.BORDER_B};
+                border-radius: 6px;
+            }}
+        """)
+        self.setFixedWidth(self._OW)
+
+        from core import audio_devices
+        from memory.config_manager import get_audio_device
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 18, 24, 18)
+        lay.setSpacing(8)
+
+        def _lbl(txt, fs=9, bold=False, color=C.PRI, align=Qt.AlignmentFlag.AlignCenter):
+            w = QLabel(txt); w.setAlignment(align)
+            w.setFont(QFont("Courier New", fs,
+                            QFont.Weight.Bold if bold else QFont.Weight.Normal))
+            w.setStyleSheet(f"color: {color}; background: transparent;")
+            return w
+
+        lay.addWidget(_lbl("🎧  AUDIO DEVICES", 12, True))
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
+        lay.addWidget(sep)
+
+        _cb_style = (f"QComboBox {{ background: #000d12; color: {C.TEXT}; "
+                     f"border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 8px; }}"
+                     f"QComboBox:focus {{ border: 1px solid {C.PRI}; }}")
+
+        lay.addWidget(_lbl("MICROPHONE (input)", 8, color=C.TEXT_DIM,
+                            align=Qt.AlignmentFlag.AlignLeft))
+        self._input_cb = QComboBox()
+        self._input_cb.setFont(QFont("Courier New", 9))
+        self._input_cb.setFixedHeight(30)
+        self._input_cb.setStyleSheet(_cb_style)
+        self._input_cb.addItems([audio_devices.DEFAULT_LABEL] + audio_devices.list_devices("input"))
+        _cur_in = get_audio_device("input") or audio_devices.DEFAULT_LABEL
+        if self._input_cb.findText(_cur_in) < 0:
+            self._input_cb.addItem(_cur_in)
+        self._input_cb.setCurrentText(_cur_in)
+        lay.addWidget(self._input_cb)
+
+        lay.addSpacing(4)
+        lay.addWidget(_lbl("SPEAKERS (output)", 8, color=C.TEXT_DIM,
+                            align=Qt.AlignmentFlag.AlignLeft))
+        self._output_cb = QComboBox()
+        self._output_cb.setFont(QFont("Courier New", 9))
+        self._output_cb.setFixedHeight(30)
+        self._output_cb.setStyleSheet(_cb_style)
+        self._output_cb.addItems([audio_devices.DEFAULT_LABEL] + audio_devices.list_devices("output"))
+        _cur_out = get_audio_device("output") or audio_devices.DEFAULT_LABEL
+        if self._output_cb.findText(_cur_out) < 0:
+            self._output_cb.addItem(_cur_out)
+        self._output_cb.setCurrentText(_cur_out)
+        lay.addWidget(self._output_cb)
+
+        lay.addSpacing(4)
+        note = QLabel("Değişiklik bir sonraki bağlantı yenilenmesinde (veya JARVIS'i "
+                       "yeniden başlatınca) etkin olur.")
+        note.setWordWrap(True)
+        note.setFont(QFont("Courier New", 7))
+        note.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        lay.addWidget(note)
+
+        lay.addSpacing(6)
+        btn_row = QHBoxLayout(); btn_row.setSpacing(8)
+
+        save_btn = QPushButton("▸  KAYDET")
+        save_btn.setFixedHeight(34)
+        save_btn.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        save_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {C.PRI};
+                border: 1px solid {C.PRI_DIM}; border-radius: 3px;
+            }}
+            QPushButton:hover {{ background: {C.PRI_GHO}; border: 1px solid {C.PRI}; }}
+        """)
+        save_btn.clicked.connect(self._save)
+        btn_row.addWidget(save_btn)
+
+        cancel_btn = QPushButton("İPTAL")
+        cancel_btn.setFixedHeight(34)
+        cancel_btn.setFont(QFont("Courier New", 9))
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {C.TEXT_MED};
+                border: 1px solid {C.BORDER}; border-radius: 3px;
+            }}
+            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+        """)
+        cancel_btn.clicked.connect(self.hide)
+        btn_row.addWidget(cancel_btn)
+        lay.addLayout(btn_row)
+        self.adjustSize()
+
+    def _save(self):
+        from memory.config_manager import save_audio_device
+        from core import audio_devices
+
+        def _norm(text: str) -> str:
+            return "" if text == audio_devices.DEFAULT_LABEL else text
+
+        save_audio_device("input",  _norm(self._input_cb.currentText()))
+        save_audio_device("output", _norm(self._output_cb.currentText()))
+        self.saved.emit()
+        self.hide()
 
 
 class ClipboardPanel(QWidget):
@@ -2036,6 +2189,9 @@ class MainWindow(QMainWindow):
     _tension_sig      = pyqtSignal(float, str)  # acoustic arousal 0-100 + label
     _confirm_sig      = pyqtSignal(str, str)    # (title, detail) — irreversible-action gate
     _confirm_hide_sig = pyqtSignal()
+    _wake_sig         = pyqtSignal()            # local "Hey Jarvis" model fired (thread-safe)
+    _auto_sleep_sig   = pyqtSignal()            # idle timeout reached — auto-mute (thread-safe)
+    _wake_toggle_sig  = pyqtSignal(bool, str)   # (is_running, error) — wake-word button refresh (thread-safe)
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -2070,6 +2226,7 @@ class MainWindow(QMainWindow):
         self._current_file: str | None = None
         self._remote_overlay: RemoteKeyOverlay | None = None
         self._customize_overlay: CustomizeOverlay | None = None
+        self._audio_overlay: AudioDeviceOverlay | None = None
         self._confirm_overlay: ConfirmBanner | None = None   # live confirm banner, if one is on screen
 
         central = QWidget()
@@ -2236,6 +2393,10 @@ class MainWindow(QMainWindow):
         self._update_autostart_btn(self._check_autostart())
         from memory.config_manager import get_brief_enabled as _gbe
         self._update_brief_btn(_gbe())
+        # Actual state (not just the saved preference) — main.py's background
+        # loader emits _wake_toggle_sig once core/wake_word.py finishes
+        # loading the model, which flips this to ON if it succeeds.
+        self._update_wake_btn(False)
 
         self._clock_tmr = QTimer(self)
         self._clock_tmr.timeout.connect(self._tick_clock)
@@ -2278,6 +2439,9 @@ class MainWindow(QMainWindow):
         self._reconfig_sig.connect(self._show_setup)
         self._confirm_sig.connect(self._show_confirm_banner)
         self._confirm_hide_sig.connect(self._hide_confirm_banner)
+        self._wake_sig.connect(self._on_wake_word_detected)
+        self._auto_sleep_sig.connect(self._on_auto_sleep)
+        self._wake_toggle_sig.connect(self._update_wake_btn)
         self._camera_sig.connect(self._show_camera_frame)
         self._cam_stream_sig.connect(self._on_cam_stream)
         self._cam_frame_sig.connect(self._on_cam_frame)
@@ -2360,9 +2524,7 @@ class MainWindow(QMainWindow):
             # Reuse camera index detected by screen_processor (cached in api_keys.json)
             cam_idx = 0
             try:
-                import json as _j
-                cfg = _j.loads((CONFIG_DIR / "api_keys.json").read_text())
-                cam_idx = int(cfg.get("camera_index", 0))
+                cam_idx = int(get_config().get("camera_index", 0))
             except Exception:
                 pass
             try:
@@ -3179,6 +3341,29 @@ class MainWindow(QMainWindow):
         self._brief_btn.clicked.connect(self._toggle_brief)
         lay.addWidget(self._brief_btn)
 
+        self._wake_btn = QPushButton()
+        self._wake_btn.setFixedHeight(26)
+        self._wake_btn.setFont(QFont("Courier New", 7))
+        self._wake_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._wake_btn.clicked.connect(self._toggle_wake_word)
+        lay.addWidget(self._wake_btn)
+
+        audio_btn = QPushButton("🎧  AUDIO DEVICES")
+        audio_btn.setFixedHeight(26)
+        audio_btn.setFont(QFont("Courier New", 7))
+        audio_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        audio_btn.setStyleSheet(_BTN_STYLE_DIM)
+        audio_btn.clicked.connect(self._open_audio_devices)
+        lay.addWidget(audio_btn)
+
+        memory_btn = QPushButton("🧠  MEMORY")
+        memory_btn.setFixedHeight(26)
+        memory_btn.setFont(QFont("Courier New", 7))
+        memory_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        memory_btn.setStyleSheet(_BTN_STYLE_DIM)
+        memory_btn.clicked.connect(self._open_memory)
+        lay.addWidget(memory_btn)
+
         plugin_btn = QPushButton("🧩  PLUGINS")
         plugin_btn.setFixedHeight(26)
         plugin_btn.setFont(QFont("Courier New", 7))
@@ -3671,6 +3856,59 @@ class MainWindow(QMainWindow):
                 QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}
             """)
 
+    # ── Wake word ────────────────────────────────────────────────────────────────
+
+    def _toggle_wake_word(self):
+        from core.wake_word import wake_detector
+        from memory.config_manager import save_wake_word_enabled
+
+        if wake_detector.is_running:
+            wake_detector.stop()
+            save_wake_word_enabled(False)
+            self._update_wake_btn(False)
+            self._log.append_log("SYS: Wake word kapatıldı.")
+            return
+
+        # start() imports onnxruntime and loads the model — the same
+        # multi-second-on-the-Qt-thread mistake audio_devices.py already
+        # documents once. Off the Qt thread, button re-enabled by the signal.
+        self._wake_btn.setText("🎤  WAKE WORD: …")
+        self._wake_btn.setEnabled(False)
+
+        def _worker():
+            ok = wake_detector.start()
+            save_wake_word_enabled(ok)
+            self._wake_toggle_sig.emit(ok, "" if ok else (wake_detector.load_error or "bilinmeyen hata"))
+
+        threading.Thread(target=_worker, daemon=True, name="wake-word-toggle").start()
+
+    def _update_wake_btn(self, running: bool, error: str = ""):
+        if not hasattr(self, '_wake_btn'):
+            return
+        self._wake_btn.setEnabled(True)
+        if running:
+            self._wake_btn.setText("🎤  WAKE WORD: ON")
+            self._wake_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: #001a08; color: {C.GREEN};
+                    border: 1px solid {C.GREEN_D}; border-radius: 3px;
+                    text-align: left; padding: 0 8px;
+                }}
+                QPushButton:hover {{ background: #002010; }}
+            """)
+        else:
+            self._wake_btn.setText("🎤  WAKE WORD: OFF")
+            self._wake_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; color: {C.TEXT_DIM};
+                    border: 1px solid {C.BORDER}; border-radius: 3px;
+                    text-align: left; padding: 0 8px;
+                }}
+                QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}
+            """)
+            if error:
+                self._log.append_log(f"ERR: Wake word başlatılamadı — {error}")
+
     # ── Customization ────────────────────────────────────────────────────────────
 
     def _open_customize(self):
@@ -3739,16 +3977,45 @@ class MainWindow(QMainWindow):
     def _open_plugin_manager(self):
         plugins = self.get_plugins() if self.get_plugins else []
         cw = self.centralWidget()
-        ov = PluginManagerOverlay(plugins, parent=cw)
+        max_h = max(240, cw.height() - 32)
+        ov = PluginManagerOverlay(plugins, parent=cw, max_height=max_h)
         ov.adjustSize()
+        oh = min(ov.height(), max_h)
+        ov.setGeometry(
+            (cw.width()  - ov.width()) // 2,
+            (cw.height() - oh) // 2,
+            ov.width(), oh,
+        )
+        ov.show()
+        ov.raise_()
+        self._plugin_manager_overlay = ov   # keep a reference so it isn't GC'd
+
+    # ── Audio devices ────────────────────────────────────────────────────────────
+
+    def _open_audio_devices(self):
+        if self._audio_overlay:
+            self._audio_overlay.hide()
+        cw = self.centralWidget()
+        ov = AudioDeviceOverlay(parent=cw)
         ov.setGeometry(
             (cw.width()  - ov.width())  // 2,
             (cw.height() - ov.height()) // 2,
             ov.width(), ov.height(),
         )
+        ov.saved.connect(lambda: self._log.append_log("SYS: Ses cihazı ayarları kaydedildi."))
         ov.show()
         ov.raise_()
-        self._plugin_manager_overlay = ov   # keep a reference so it isn't GC'd
+        self._audio_overlay = ov
+
+    # ── Memory ───────────────────────────────────────────────────────────────────
+
+    def _open_memory(self):
+        try:
+            from memory.memory_manager import load_memory, format_memory_for_prompt
+            text = format_memory_for_prompt(load_memory()) or "Henüz kayıtlı bir hafıza yok."
+        except Exception as e:
+            text = f"Hafıza okunamadı: {e}"
+        self._show_content("MEMORY", text)
 
     # ── Clipboard intelligence ───────────────────────────────────────────────────
 
@@ -3782,6 +4049,30 @@ class MainWindow(QMainWindow):
     def _do_interrupt(self):
         if self.on_interrupt:
             self.on_interrupt()
+
+    def _on_wake_word_detected(self):
+        """Slot for _wake_sig — runs on the Qt thread. Unmutes if the mic was
+        muted (the only state wake word matters in); otherwise just logs it,
+        since unmuted audio is already reaching Gemini."""
+        if self._muted:
+            self._toggle_mute()
+            self._log.append_log("SYS: 🎙️ 'Hey Jarvis' algılandı — mikrofon açıldı.")
+        else:
+            self._log.append_log("SYS: 'Hey Jarvis' algılandı (mikrofon zaten açık).")
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_auto_sleep(self):
+        """Slot for _auto_sleep_sig — runs on the Qt thread. Only mutes; if
+        the user already muted it manually (or woke it and started talking
+        right as this fires) there is nothing to do."""
+        if not self._muted:
+            self._toggle_mute()
+            self._log.append_log(
+                "SYS: 😴 Sessizlikten sonra otomatik uykuya geçildi. "
+                "Uyandırmak için 'Hey Jarvis' deyin ya da mikrofon düğmesine basın."
+            )
 
     def _toggle_mute(self):
         self._muted = not self._muted
@@ -3860,12 +4151,8 @@ class MainWindow(QMainWindow):
         self.hud.speaking = (state == "SPEAKING")
 
     def _check_config(self) -> bool:
-        if not API_FILE.exists(): return False
-        try:
-            d = json.loads(API_FILE.read_text(encoding="utf-8"))
-            return bool(d.get("gemini_api_key")) and bool(d.get("os_system"))
-        except Exception:
-            return False
+        d = get_config()
+        return bool(d.get("gemini_api_key")) and bool(d.get("os_system"))
 
     def _show_setup(self):
         ov = SetupOverlay(self.centralWidget())
@@ -4036,6 +4323,23 @@ class JarvisUI:
     def hide_confirm(self) -> None:
         """Thread-safe: tear down the confirmation banner, if one is showing."""
         self._win._confirm_hide_sig.emit()
+
+    def notify_wake_word(self) -> None:
+        """Thread-safe: called from core/wake_word.py's background thread
+        when the local 'Hey Jarvis' model fires. Bound to it in main()."""
+        self._win._wake_sig.emit()
+
+    def auto_sleep(self) -> None:
+        """Thread-safe: called from JarvisLive._run_auto_sleep (the asyncio
+        thread) when the mic has been unmuted with no user speech for a
+        while. Mutes it, mirroring the manual mic button."""
+        self._win._auto_sleep_sig.emit()
+
+    def update_wake_word_button(self, running: bool, error: str = "") -> None:
+        """Thread-safe: called from main() once the background wake-word
+        loader (core/wake_word.py) finishes, so the WAKE WORD button in the
+        quick drawer reflects whether it actually came up."""
+        self._win._wake_toggle_sig.emit(running, error)
 
     def show_camera_frame(self, img_bytes: bytes):
         """Thread-safe: show a webcam frame in the small overlay (screen captures)."""
