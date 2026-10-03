@@ -2,16 +2,16 @@
   "mcpServers": {
     "playwright": {
       "description": "Official Microsoft Playwright MCP for browser automation (navigate, click, fill forms, screenshots, network/console inspection). Lets Claude Code drive a real browser to test JARVIS's dashboard (dashboard/static/app.html, login.html) and any web-facing features directly.",
-      "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest"]
+      "command": "node",
+      "args": ["D:\\programlar\\Jarvis\\mcp_tools\\node_modules\\@playwright\\mcp\\cli.js"]
     },
     "elevenlabs": {
       "description": "Official ElevenLabs MCP for text-to-speech, voice cloning, audio processing, and transcription. JARVIS's core/tts.py already supports ElevenLabs as a TTS engine (config key elevenlabs_api_key) — this lets Claude Code test/design voices directly.",
-      "command": "uvx",
-      "args": ["elevenlabs-mcp"],
+      "command": "D:\\programlar\\Jarvis\\mcp_tools\\pyenv\\Scripts\\python.exe",
+      "args": ["-c", "from elevenlabs_mcp.server import main; main()"],
       "env": {
         "ELEVENLABS_API_KEY": "${ELEVENLABS_API_KEY}",
-        "ELEVENLABS_MCP_BASE_PATH": "D:\\nu\\JARVIS\\uploads",
+        "ELEVENLABS_MCP_BASE_PATH": "D:\\programlar\\Jarvis\\uploads",
         "ELEVENLABS_MCP_OUTPUT_MODE": "files"
       }
     },
@@ -22,8 +22,8 @@
     },
     "blender": {
       "description": "BlenderMCP — live control of a running Blender scene (scene/object info, viewport screenshots, arbitrary Python execution, Poly Haven/Sketchfab/Poly Pizza asset import, Hyper3D/Hunyuan3D text-to-3D generation). Requires Blender open with its BlenderMCP addon (View3D > Sidebar > BlenderMCP) — the addon auto-starts its socket server on port 9876 when Blender loads. Complements plugins/blender_controller.py, which drives headless Blender for one-shot renders/exports without needing Blender open.",
-      "command": "uvx",
-      "args": ["blender-mcp"]
+      "command": "D:\\programlar\\Jarvis\\mcp_tools\\pyenv\\Scripts\\python.exe",
+      "args": ["-c", "from blender_mcp.server import main; main()"]
     }
   }
 }

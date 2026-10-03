@@ -16,3 +16,14 @@ android-remote/build/
 generated_models/
 memory/chroma_db/
 kripto_botu/
+config/certs/
+config/voice_id.npy
+memory/conversations/
+memory/*.json
+memory/.memory_palace_bootstrapped
+reports/
+mcp_tools/
+.env
+*.env
+*.key
+*.pem

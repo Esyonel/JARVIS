@@ -54,6 +54,36 @@ def existing_capabilities() -> list[str]:
     return [f"{r.name}: {r.description[:110]}" for r in registry._all_records if r.valid]
 
 
+ALLOWED_IMPORTS = (
+    "Python standard library, requests, httpx, openpyxl, psutil, numpy, scipy, "
+    "pandas, matplotlib, sympy, networkx, beautifulsoup4, pillow, rich, pydantic, "
+    "trimesh, numpy-stl (import stl), manifold3d, solidpython2 (import solid2), "
+    "shapely, open3d, pymeshlab, meshio, ezdxf, svgpathtools"
+)
+
+# Runs 3x a day (see gunluk_evrim_kur.bat); the hour picks the topic so the
+# three daily runs cover Python, 3D printing, and a free choice.
+FOCUS_BY_SLOT = [
+    (12, "Python expertise: tools that help the owner write, run, debug, profile, "
+         "test or explain Python code and work with Python libraries."),
+    (17, "3D design and printing: drawing printable parts, checking/repairing "
+         "meshes, measuring STL files, preparing models for the Bambu Lab printer. "
+         "OpenSCAD is at C:\\Program Files\\OpenSCAD (Nightly)\\openscad.exe, "
+         "Blender at C:\\Program Files\\Blender Foundation\\, Bambu Studio at "
+         "C:\\Program Files\\Bambu Studio\\bambu-studio.exe — the plugin may call "
+         "these via subprocess. Do not duplicate printer_3d_studio."),
+    (24, "Free choice: whatever capability is most clearly missing for the owner."),
+]
+
+
+def current_focus() -> str:
+    hour = datetime.now().hour
+    for limit, focus in FOCUS_BY_SLOT:
+        if hour < limit:
+            return focus
+    return FOCUS_BY_SLOT[-1][1]
+
+
 def propose_new_capability(existing: list[str]) -> str:
     from core.ai_text import generate
 
@@ -61,16 +91,16 @@ def propose_new_capability(existing: list[str]) -> str:
     prompt = (
         "You are JARVIS, a Turkish-speaking voice assistant running on its owner's "
         "Windows PC. The owner is a systems/network specialist who works with Excel "
-        "spreadsheets, runs trading bots, and manages construction projects in "
-        "Kazakhstan.\n\n"
+        "spreadsheets, runs trading bots, manages construction projects in "
+        "Kazakhstan, programs in Python and designs parts for a Bambu Lab 3D printer.\n\n"
         f"Capabilities you ALREADY have:\n{listing}\n\n"
-        "Propose exactly ONE genuinely useful NEW capability you do not have yet. "
-        "It must not duplicate anything above.\n\n"
+        f"Today's focus area: {current_focus()}\n\n"
+        "Propose exactly ONE genuinely useful NEW capability in that focus area that "
+        "you do not have yet. It must not duplicate anything above.\n\n"
         "HARD CONSTRAINT — the plugin may import ONLY these, nothing else:\n"
-        "  Python standard library, requests, openpyxl, psutil, numpy, "
-        "beautifulsoup4, pillow.\n"
+        f"  {ALLOWED_IMPORTS}.\n"
         "Nothing may be pip-installed to make it work. If the feature would need "
-        "any other package (speedtest-cli, pandas, matplotlib, scapy, selenium, ...), "
+        "any other package (speedtest-cli, scapy, selenium, cadquery, ...), "
         "propose a DIFFERENT feature instead — a plugin that reports 'library not "
         "found' is worse than useless.\n\n"
         "Reply with ONE sentence in Turkish describing the feature to build. "

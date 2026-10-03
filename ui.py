@@ -2422,6 +2422,13 @@ class MainWindow(QMainWindow):
         self._ticker_tmr = QTimer(self)
         self._ticker_tmr.timeout.connect(self._refresh_tickers)
         self._ticker_tmr.start(5 * 60 * 1000)
+
+        # Piyasa/finans brifing göstergesi — market_watch/monitor.py (JARVIS'ten
+        # bağımsız, ayrı bir süreç) tarafından yazılan JSON'u periyodik okur
+        self._market_tmr = QTimer(self)
+        self._market_tmr.timeout.connect(self._poll_market_briefing)
+        self._market_tmr.start(25000)
+        self._poll_market_briefing()
         self._refresh_tickers()
 
         # Live mic-level meter — shows the mic is actually picking up sound,
@@ -3160,6 +3167,16 @@ class MainWindow(QMainWindow):
         lay.addSpacing(4)
 
         lay.addStretch()
+
+        self._market_unread = False
+        self._market_alert_btn = QPushButton()
+        self._market_alert_btn.setFixedHeight(34)
+        self._market_alert_btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        self._market_alert_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._market_alert_btn.clicked.connect(self._on_market_alert_clicked)
+        self._style_market_alert_btn()
+        lay.addWidget(self._market_alert_btn)
+        lay.addSpacing(4)
 
         self._telegram_relay_btn = QPushButton()
         self._telegram_relay_btn.setFixedHeight(34)
@@ -4137,6 +4154,65 @@ class MainWindow(QMainWindow):
                 }}
                 QPushButton:hover {{ background: {C.PANEL2}; border-color: {C.PRI_DIM}; }}
             """)
+
+    # ── Piyasa/finans brifing göstergesi ─────────────────────────────────────
+    # market_watch/monitor.py JARVIS'ten TAMAMEN BAĞIMSIZ bir süreç olarak
+    # çalışır; burada sadece onun yazdığı JSON'u periyodik okuyup göstergeyi
+    # güncelliyoruz — JARVIS'in asyncio çekirdeğine hiç dokunmuyoruz.
+    _MARKET_BRIEFING_FILE = Path(__file__).resolve().parent / "memory" / "market_briefing.json"
+
+    def _poll_market_briefing(self):
+        try:
+            if not self._MARKET_BRIEFING_FILE.exists():
+                return
+            data = json.loads(self._MARKET_BRIEFING_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        unread = bool(data.get("unread"))
+        if unread != self._market_unread:
+            self._market_unread = unread
+            self._style_market_alert_btn()
+
+    def _style_market_alert_btn(self):
+        if self._market_unread:
+            self._market_alert_btn.setText("PİYASA BRİFİNGİ\n●  YENİ VERİ")
+            self._market_alert_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: #201400; color: {C.ACC};
+                    border: 1px solid {C.ACC}; border-radius: 3px;
+                }}
+                QPushButton:hover {{ background: #2a1c00; }}
+            """)
+        else:
+            self._market_alert_btn.setText("PİYASA BRİFİNGİ\n○  GÜNCEL")
+            self._market_alert_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {C.PANEL2}; color: {C.TEXT_DIM};
+                    border: 1px solid {C.BORDER_A}; border-radius: 3px;
+                }}
+                QPushButton:hover {{ background: {C.PANEL2}; border-color: {C.PRI_DIM}; }}
+            """)
+
+    def _on_market_alert_clicked(self):
+        try:
+            data = json.loads(self._MARKET_BRIEFING_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = None
+        if not data or not data.get("summary_text"):
+            self._log.append_log(
+                "SYS: Piyasa brifingi henüz mevcut değil (market_watch süreci çalışıyor mu?)."
+            )
+            return
+        self._show_content("PİYASA BRİFİNGİ", data["summary_text"])
+        self._market_unread = False
+        self._style_market_alert_btn()
+        try:
+            data["unread"] = False
+            self._MARKET_BRIEFING_FILE.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+        except Exception:
+            pass
 
     def _send(self):
         txt = self._input.text().strip()
